@@ -21,3 +21,6 @@ app/.flutter-plugins-dependencies
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+# ローカルの確認ログ
+logs/
