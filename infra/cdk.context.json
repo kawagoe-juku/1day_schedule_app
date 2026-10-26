@@ -1,0 +1,10 @@
+{
+  "hosted-zone:account=590183972685:domainName=super-ai-schedule-app.com:region=us-east-1": {
+    "Id": "/hostedzone/Z0966319101L78W0GRQ1G",
+    "Name": "super-ai-schedule-app.com."
+  },
+  "hosted-zone:account=590183972685:domainName=super-ai-schedule-app.com:region=ap-northeast-1": {
+    "Id": "/hostedzone/Z0966319101L78W0GRQ1G",
+    "Name": "super-ai-schedule-app.com."
+  }
+}

@@ -18,7 +18,8 @@ export interface EgressIpStackProps extends StackProps {
 export class EgressIpStack extends Stack {
   constructor(scope: Construct, id: string, props: EgressIpStackProps) {
     super(scope, id, props);
-    const { stage, egressIpCount } = props.config;
+    const { stage } = props.config;
+    const egressIpCount = props.config.network.natGateways;
 
     for (let i = 1; i <= egressIpCount; i++) {
       const eip = new CfnEIP(this, `EgressIp${i}`, { domain: 'vpc' });

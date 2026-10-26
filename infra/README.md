@@ -4,16 +4,38 @@ TypeScript の CDK アプリ。ルートの npm workspaces に含まれる。
 
 ## スタック
 
-| スタック | 内容 | 状態 |
-| --- | --- | --- |
-| `ScheduleApp-<stage>-EgressIp` | 外部 API 向けの固定出口 IP（Elastic IP）。削除しても IP は保持 | 作成済み（dev） |
-| Network / Data / Auth / App / Web / Pipeline / Ops | WBS 2.x で追加 | 未作成 |
+上から順に依存する。作成済みのものだけ `lib/build-app.ts` で組み立て、残りは各 WBS タスクで追加する。
 
-環境（stage）は `dev`（既定）／`stg`／`prod`。差分は `lib/config.ts` に集める。
+| スタック | 内容 | WBS | 状態 |
+| --- | --- | --- | --- |
+| `ScheduleApp-<stage>-EgressIp` | 外部 API 向けの固定出口 IP（Elastic IP）。削除しても IP は保持 | 2.1 | dev 作成済み |
+| `ScheduleApp-<stage>-CertCloudFront` | CloudFront 用の証明書（us-east-1、`<appDomain>` と `*.<appDomain>`） | 1.4 | dev 作成済み |
+| `ScheduleApp-<stage>-CertAlb` | ALB 用の証明書（東京、同上） | 1.4 | dev 作成済み |
+| `ScheduleApp-<stage>-Network` | VPC・サブネット・NAT Gateway（EgressIp の IP を使う）・セキュリティグループ | 2.2 | 未作成 |
+| `ScheduleApp-<stage>-Data` | Aurora Serverless v2・Secrets Manager | 2.3 | 未作成 |
+| `ScheduleApp-<stage>-Auth` | Cognito User Pool・App Client | 2.4 | 未作成 |
+| `ScheduleApp-<stage>-App` | ECR・ECS Fargate・ALB・バッチ（EventBridge Scheduler） | 2.5・7.2 | 未作成 |
+| `ScheduleApp-<stage>-Web` | S3＋CloudFront・WAF | 2.6・9.2 | 未作成 |
+| `ScheduleApp-<stage>-Pipeline` | CodePipeline／CodeBuild | 2.7 | 未作成 |
+| `ScheduleApp-<stage>-Ops` | CloudWatch アラーム・ダッシュボード・Billing Alarm | 9.1 | 未作成 |
+
+## 環境ごとの設定（`lib/config.ts`）
+
+| 項目 | dev | stg | prod |
+| --- | --- | --- | --- |
+| URL | dev.super-ai-schedule-app.com | stg.super-ai-schedule-app.com | super-ai-schedule-app.com |
+| VPC（仮置き。1.10 で確定） | 10.100.0.0/16 | 10.101.0.0/16 | 10.102.0.0/16 |
+| AZ／NAT Gateway | 2／1 | 2／1 | 2／2 |
+| ECS（vCPU・メモリ／台数） | 0.25・0.5GB／1〜2 | 0.25・0.5GB／1〜2 | 0.25・0.5GB／2〜4 |
+| Aurora（ACU／読み取り） | 0（自動停止）〜2／なし | 0.5〜2／なし | 0.5〜4／1（Multi-AZ） |
+| バックアップ／削除保護 | 7日／なし | 7日／あり | 7日／あり |
+| ログ保持 | 30日 | 90日 | 90日 |
 
 ## 使い方（リポジトリ直下から）
 
 ```bash
+npm run infra:release   # テスト→型チェック→差分表示→確認（y）→デプロイ→状態確認（dev のみ）
+npm run aws:check       # 状態の確認のみ（変更しない）。結果は logs/aws-check.log
 npm run infra:diff      # 変更内容の確認
 npm run infra:deploy    # デプロイ（dev）
 npm run infra:ip        # 出口 IP の表示（Google キーの IP 制限に登録する値）
@@ -23,5 +45,5 @@ npm run infra:ip        # 出口 IP の表示（Google キーの IP 制限に登
 
 ## 前提
 
-- `cdk bootstrap` 済み（`--example-permissions-boundary` 付き）。IAM ロールを作るスタック（WBS 2.x）を追加するときに、同じ境界を `cdk.json` で全ロールに付ける。
+- `cdk bootstrap` 済み（ap-northeast-1・us-east-1、削除保護あり、権限の上限なし）。
 - 認証情報は `docs/setup/aws-account.md` のプロファイル `schedule-app-dev`。

@@ -5,7 +5,10 @@
       "Sid": "UseCdkBootstrapRoles",
       "Effect": "Allow",
       "Action": "sts:AssumeRole",
-      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/cdk-hnb659fds-*-<ACCOUNT_ID>-ap-northeast-1"
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/cdk-hnb659fds-*-<ACCOUNT_ID>-ap-northeast-1",
+        "arn:aws:iam::<ACCOUNT_ID>:role/cdk-hnb659fds-*-<ACCOUNT_ID>-us-east-1"
+      ]
     },
     {
       "Sid": "InvokeBedrockForLocalDev",
@@ -21,6 +24,28 @@
       "Effect": "Allow",
       "Action": ["bedrock:ListFoundationModels", "bedrock:ListInferenceProfiles"],
       "Resource": "*"
+    },
+    {
+      "Sid": "ReadAppSecrets",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+      "Resource": ["arn:aws:secretsmanager:ap-northeast-1:<ACCOUNT_ID>:secret:ai-schedule-app/*"]
+    },
+    {
+      "Sid": "ReadDeployStatus",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStacks",
+        "route53:ListHostedZones",
+        "acm:ListCertificates"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadAppParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParametersByPath",
+      "Resource": "arn:aws:ssm:ap-northeast-1:<ACCOUNT_ID>:parameter/schedule-app/*"
     }
   ]
 }
