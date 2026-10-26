@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>2.2.2 ホーム／入力画面</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/common.css" rel="stylesheet">
+</head>
+<body>
+  <div class="app-frame">
+    <header class="app-header">
+      <h1 class="app-header__title">ホーム</h1>
+    </header>
+
+    <main class="app-main app-main--home">
+      <div class="home-layout">
+        <div class="home-layout__primary">
+      <!-- 紙芝居用：状態切替（通常入力 ↔ 確認質問） -->
+      <div class="state-toggle-bar">
+        <span>表示切替:</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-home-state="normal">通常入力</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-home-state="confirm-1">確認質問（1回目）</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-home-state="confirm-2">確認質問（2回目）</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-home-state="confirm-limit">上限到達</button>
+      </div>
+
+      <!-- 通常入力状態 -->
+      <section id="home-normal">
+        <div class="mb-3">
+          <label for="task-input" class="form-label">用事入力<span class="required-mark">*</span></label>
+          <textarea class="form-control" id="task-input" rows="4" maxlength="500">今日14時に渋谷で友人と待ち合わせ。帰りにスーパーで買い物</textarea>
+          <div class="error-message">用事を入力してください</div>
+        </div>
+        <button type="button" class="btn btn-outline-secondary mb-3 btn--preparing" disabled title="準備中">
+          音声入力<span class="preparing-label">（準備中）</span>
+        </button>
+        <a href="2.2.3_行動計画結果画面.html" class="btn btn--primary btn--full d-block text-center text-decoration-none">計画生成</a>
+      </section>
+
+      <!-- 確認質問インライン状態 -->
+      <section id="home-confirm" class="hidden">
+        <div class="confirm-card">
+          <p class="confirm-card__question" id="confirm-question-text">待ち合わせの場所は渋谷駅の何番出口付近ですか？</p>
+          <div class="mb-3">
+            <label for="confirm-answer" class="form-label">確認質問回答欄</label>
+            <textarea class="form-control" id="confirm-answer" rows="3" maxlength="500" placeholder="回答を入力"></textarea>
+          </div>
+          <button type="button" class="btn btn--primary btn--full">回答送信</button>
+          <p class="confirm-card__notice hidden" id="confirm-notice"></p>
+        </div>
+      </section>
+
+      <!-- エラー・再試行サンプル（非表示） -->
+      <div class="mt-4 hidden" id="error-sample">
+        <p class="error-message error-message--visible">取得に失敗しました</p>
+        <button type="button" class="btn btn-outline-secondary btn-sm">再試行</button>
+      </div>
+        </div>
+
+        <aside class="home-layout__aside">
+      <nav class="shortcut-grid shortcut-grid--vertical" aria-label="機能ショートカット">
+        <a href="2.2.4_ルーティン設定画面.html" class="btn btn-outline-dark">ルーティン</a>
+        <a href="2.2.5_メモ買い物リスト画面.html" class="btn btn-outline-dark">メモ</a>
+        <a href="2.2.6_アカウント設定画面.html" class="btn btn-outline-dark">設定</a>
+      </nav>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="js/common.js"></script>
+</body>
+</html>

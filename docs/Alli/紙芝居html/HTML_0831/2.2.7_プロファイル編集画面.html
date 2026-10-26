@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>2.2.7 プロファイル編集画面</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/common.css" rel="stylesheet">
+</head>
+<body>
+  <div class="app-frame">
+    <header class="app-header">
+      <a href="2.2.6_アカウント設定画面.html" class="app-header__back" aria-label="戻る">←</a>
+      <h1 class="app-header__title">プロファイル編集</h1>
+    </header>
+
+    <main class="app-main">
+      <form class="profile-form">
+        <div class="profile-form__field profile-form__field--full mb-3">
+          <label for="profile-email" class="form-label">メールアドレス<span class="required-mark">*</span></label>
+          <input type="email" class="form-control" id="profile-email" value="user@example.com">
+          <div class="error-message">メールアドレスを入力してください</div>
+        </div>
+        <div class="profile-form__field profile-form__field--full mb-3">
+          <label for="profile-home" class="form-label">自宅住所<span class="required-mark">*</span></label>
+          <input type="text" class="form-control" id="profile-home" value="東京都世田谷区〇〇1-2-3">
+          <div class="error-message">自宅住所を入力してください</div>
+        </div>
+        <div class="profile-form__field profile-form__field--full mb-3">
+          <label for="profile-station" class="form-label">よく使う駅</label>
+          <input type="text" class="form-control" id="profile-station" value="吉祥寺, 渋谷">
+        </div>
+        <div class="profile-form__field mb-3">
+          <label for="profile-walk-speed" class="form-label">徒歩速度</label>
+          <select class="form-select" id="profile-walk-speed">
+            <option>遅い</option>
+            <option selected>標準</option>
+            <option>速い</option>
+          </select>
+        </div>
+        <div class="profile-form__field mb-3">
+          <label for="profile-prep-time" class="form-label">準備時間</label>
+          <input type="number" class="form-control" id="profile-prep-time" value="30">
+        </div>
+        <div class="profile-form__field mb-3">
+          <label for="profile-station-label" class="form-label">駅ラベル</label>
+          <input type="text" class="form-control" id="profile-station-label" value="自宅最寄り">
+        </div>
+        <div class="profile-form__actions profile-form__field--full">
+        <button type="button" class="btn btn--primary btn--full" data-show-toast="保存しました" data-toast-type="success">保存</button>
+        </div>
+      </form>
+    </main>
+
+    <footer class="app-footer-actions">
+      <a href="2.2.6_アカウント設定画面.html" class="btn btn-outline-secondary btn--full">戻る</a>
+    </footer>
+  </div>
+
+  <div class="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="js/common.js"></script>
+</body>
+</html>

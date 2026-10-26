@@ -1,0 +1,1641 @@
+openapi: 3.1.0
+info:
+  title: AIスケジュール外出支援サービス API
+  version: 0.2.0
+  description: |
+    Webアプリ（Flutter Web）向けのREST API。単一のサーバで `/api/*`（APIサービス）と
+    `/agent/*`（AI連携基盤）を提供する。
+
+    ## 共通ルール
+    - 認証：ヘルスチェックとOAuthコールバックを除き、全APIで `Authorization: Bearer <JWT>`（Cognito発行）が必須。
+      ユーザーはJWTの `sub` で識別し、リクエストでユーザーIDは受け取らない。
+    - 日時：ISO 8601・日本時間（例 `2026-11-02T13:00:00+09:00`）。時刻のみの項目は `HH:mm`（24時間制）。
+    - エラー：すべて `Error` 形式で返す。
+    - 列挙値：APIでは英字コードを使う。DBの日本語値との対応は各スキーマの説明に記載。
+    - 「準備のみ」機能（音声入力・延期再計画・出発検知）は Feature Flag OFF の間 `501 FEATURE_DISABLED` を返す。
+
+    ## 決定事項（2026-10-15 前田さんレビュー）
+    - 列挙値は英字コードでやり取りし、画面表示はアプリ側で日本語に変換する。
+    - オンボーディング完了は `PUT /api/profile` の `completeOnboarding: true` で保存する（専用APIは設けない）。
+    - メモ本文の上限は255文字（DB定義書どおり）。
+    - ポイントプログラムは主要6種（楽天・V・d・Ponta・WAON POINT・nanaco）。
+
+    ## 要件定義からの差分
+    - Web版のため `POST/DELETE /api/push-subscriptions` は定義しない。
+    - 画面表示に必要なため次を追加：`GET /api/integrations`（連携状態の一覧）、
+      `GET /api/integrations/{provider}/callback`（OAuthコールバック）、ヘルスチェック2本。
+servers:
+  - url: /
+    description: 同一オリジン（CloudFront経由）
+security:
+  - bearerAuth: []
+tags:
+  - name: health
+    description: ヘルスチェック
+  - name: plans
+    description: 行動計画（AI連携基盤 /agent）
+  - name: profile
+    description: プロファイル・サジェスト
+  - name: memos
+    description: メモ・買い物リスト
+  - name: routines
+    description: ルーティン
+  - name: calendar
+    description: カレンダー連携
+  - name: settings
+    description: 各種設定
+  - name: account
+    description: アカウント操作
+  - name: stub
+    description: 準備のみ（Feature Flag OFF）
+
+paths:
+  /api/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: 生存確認（ALBヘルスチェック用）
+      security: []
+      responses:
+        '200':
+          description: 稼働中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /api/health/ready:
+    get:
+      tags: [health]
+      operationId: getReadiness
+      summary: 準備完了確認（DB接続を含む）
+      security: []
+      responses:
+        '200':
+          description: 依存先に接続できる
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: 依存先に接続できない
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+
+  # ---------------------------------------------------------------- /agent
+  /agent/plans:
+    post:
+      tags: [plans]
+      operationId: createPlan
+      summary: 自然文から行動計画を生成する
+      description: |
+        必須情報が不足する場合は `status=clarifying` と確認質問を返す（最大2回）。
+        1人1日20回の生成上限を超えると `429 RATE_LIMITED`。
+        サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlanRequest'
+      responses:
+        '201':
+          description: 生成した（または確認質問中の）計画
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+  /agent/plans/{planId}:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+    get:
+      tags: [plans]
+      operationId: getPlan
+      summary: 行動計画を取得する
+      responses:
+        '200':
+          description: 計画
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /agent/plans/{planId}/clarify:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+    post:
+      tags: [plans]
+      operationId: answerClarification
+      summary: 確認質問に回答して生成を続ける
+      description: |
+        `status=clarifying` の計画にのみ有効。2回目の回答後も情報が不足する場合は、
+        仮定（`assumptions`）を明示して計画を完成させる。
+        サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClarifyRequest'
+      responses:
+        '200':
+          description: 更新後の計画
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+  /agent/plans/{planId}/revise:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+    post:
+      tags: [plans]
+      operationId: revisePlan
+      summary: 自然文の修正指示で計画を再生成する
+      description: サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviseRequest'
+      responses:
+        '200':
+          description: 再生成した計画
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+  /agent/plans/{planId}/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+      - $ref: '#/components/parameters/ItemId'
+    delete:
+      tags: [plans]
+      operationId: deletePlanItem
+      summary: 行動項目を削除し、影響するスロットを再評価する
+      responses:
+        '200':
+          description: 再評価後の計画
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+  /agent/plans/{planId}/replan:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+    post:
+      tags: [stub]
+      operationId: replanPlan
+      summary: 延期申告による再計画（準備のみ）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplanRequest'
+      responses:
+        '200':
+          description: 再計画した計画（Feature Flag ON時）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          $ref: '#/components/responses/FeatureDisabled'
+  /agent/plans/{planId}/departure-detected:
+    parameters:
+      - $ref: '#/components/parameters/PlanId'
+    post:
+      tags: [stub]
+      operationId: recordDeparture
+      summary: 出発検知の記録（Web版では範囲外のため準備のみ）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartureDetectedRequest'
+      responses:
+        '204':
+          description: 記録した（Feature Flag ON時）
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          $ref: '#/components/responses/FeatureDisabled'
+
+  # ---------------------------------------------------------------- /api profile
+  /api/profile:
+    get:
+      tags: [profile]
+      operationId: getProfile
+      summary: プロファイルを取得する
+      description: 初回ログイン時（プロファイル未作成）は `onboardingCompleted=false` の初期値を返す。
+      responses:
+        '200':
+          description: プロファイル
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [profile]
+      operationId: updateProfile
+      summary: プロファイルを更新する（オンボーディング完了時の保存を含む）
+      description: |
+        `homePlaceId` を指定した場合、サーバがジオコーディングして緯度・経度を保存する。
+        メールアドレスはCognitoの確認フローで変更するため、本APIでは変更しない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdate'
+      responses:
+        '200':
+          description: 更新後のプロファイル
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+  /api/geo/address-suggestions:
+    get:
+      tags: [profile]
+      operationId: suggestAddresses
+      summary: 住所の候補を返す（Google Maps）
+      parameters:
+        - $ref: '#/components/parameters/SuggestQuery'
+        - $ref: '#/components/parameters/SuggestLimit'
+      responses:
+        '200':
+          description: 候補（0件も正常）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressSuggestionList'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+  /api/geo/station-suggestions:
+    get:
+      tags: [profile]
+      operationId: suggestStations
+      summary: 駅名の候補を返す（乗換案内API）
+      parameters:
+        - $ref: '#/components/parameters/SuggestQuery'
+        - $ref: '#/components/parameters/SuggestLimit'
+      responses:
+        '200':
+          description: 候補（0件も正常）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StationSuggestionList'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
+
+  # ---------------------------------------------------------------- /api memos
+  /api/memos:
+    get:
+      tags: [memos]
+      operationId: listMemos
+      summary: メモを全件取得する（ページングなし）
+      responses:
+        '200':
+          description: メモ一覧（作成日時の新しい順）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [memos]
+      operationId: createMemo
+      summary: メモを作成する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoCreate'
+      responses:
+        '201':
+          description: 作成したメモ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memo'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/memos/{memoId}:
+    parameters:
+      - $ref: '#/components/parameters/MemoId'
+    put:
+      tags: [memos]
+      operationId: updateMemo
+      summary: メモ本文・行チェックを更新する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoUpdate'
+      responses:
+        '200':
+          description: 更新後のメモ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memo'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [memos]
+      operationId: deleteMemo
+      summary: メモを削除する（物理削除）
+      responses:
+        '204':
+          description: 削除した
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------- /api routines
+  /api/routines:
+    get:
+      tags: [routines]
+      operationId: listRoutines
+      summary: ルーティンを全件取得する（ページングなし）
+      responses:
+        '200':
+          description: ルーティン一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutineList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [routines]
+      operationId: createRoutine
+      summary: ルーティンを登録する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutineInput'
+      responses:
+        '201':
+          description: 登録したルーティン
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Routine'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/routines/{routineId}:
+    parameters:
+      - $ref: '#/components/parameters/RoutineId'
+    put:
+      tags: [routines]
+      operationId: updateRoutine
+      summary: ルーティンを更新する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutineInput'
+      responses:
+        '200':
+          description: 更新後のルーティン
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Routine'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [routines]
+      operationId: deleteRoutine
+      summary: ルーティンを削除する（物理削除）
+      responses:
+        '204':
+          description: 削除した
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/routines/{routineId}/skip:
+    parameters:
+      - $ref: '#/components/parameters/RoutineId'
+    put:
+      tags: [routines]
+      operationId: setRoutineSkip
+      summary: 当日分のみスキップする（単発スキップ）／取り消す
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutineSkipRequest'
+      responses:
+        '200':
+          description: 更新後のルーティン
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Routine'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------- /api calendar
+  /api/calendar/events:
+    get:
+      tags: [calendar]
+      operationId: listCalendarEvents
+      summary: 当日のカレンダー予定（キャッシュ）を取得する
+      description: カレンダー予定の利用同意がOFFの場合は空配列を返す。
+      responses:
+        '200':
+          description: 当日の予定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEventList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/integrations:
+    get:
+      tags: [calendar]
+      operationId: listIntegrations
+      summary: 外部連携の状態一覧（設定画面の表示用に追加）
+      responses:
+        '200':
+          description: 連携状態
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/integrations/{provider}:
+    parameters:
+      - $ref: '#/components/parameters/Provider'
+    post:
+      tags: [calendar]
+      operationId: startIntegration
+      summary: 外部連携（OAuth）を開始する
+      description: |
+        返却した `authorizationUrl` にブラウザを遷移させる。同意後はプロバイダから
+        `GET /api/integrations/{provider}/callback` にリダイレクトされる。
+      responses:
+        '200':
+          description: 認可URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationStart'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [calendar]
+      operationId: deleteIntegration
+      summary: 外部連携を解除する
+      description: トークン（Secrets Manager）と当日予定キャッシュを削除する。
+      responses:
+        '204':
+          description: 解除した（未連携でも204）
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/integrations/{provider}/callback:
+    parameters:
+      - $ref: '#/components/parameters/Provider'
+    get:
+      tags: [calendar]
+      operationId: integrationCallback
+      summary: OAuthコールバック（プロバイダからのリダイレクト先）
+      description: |
+        ブラウザのリダイレクトで呼ばれるためJWTは不要。`state` で開始時のユーザーと照合する。
+        処理後、Webアプリの設定画面（またはオンボーディングStep5）へ302でリダイレクトする。
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          description: 同意拒否時にプロバイダが付与
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Webアプリへリダイレクト（結果はクエリ `integration=connected|denied|error`）
+          headers:
+            Location:
+              schema:
+                type: string
+
+  # ---------------------------------------------------------------- /api settings
+  /api/privacy-settings:
+    get:
+      tags: [settings]
+      operationId: getPrivacySettings
+      summary: プライバシー設定（オプトイン）を取得する
+      responses:
+        '200':
+          description: 設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacySettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [settings]
+      operationId: updatePrivacySettings
+      summary: プライバシー設定を更新する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacySettings'
+      responses:
+        '200':
+          description: 更新後の設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacySettings'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/point-programs:
+    get:
+      tags: [settings]
+      operationId: listPointPrograms
+      summary: 選択できるポイントプログラムと有効状態を取得する
+      responses:
+        '200':
+          description: ポイントプログラム一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PointProgramList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [settings]
+      operationId: updatePointPrograms
+      summary: 有効にするポイントプログラムを設定する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PointProgramUpdate'
+      responses:
+        '200':
+          description: 更新後の一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PointProgramList'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/notification-settings:
+    get:
+      tags: [settings]
+      operationId: getNotificationSettings
+      summary: 通知設定を取得する（入口のみ・配信は行わない）
+      responses:
+        '200':
+          description: 設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [settings]
+      operationId: updateNotificationSettings
+      summary: 通知設定を保存する（本リリースでは配信しない）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationSettingsUpdate'
+      responses:
+        '200':
+          description: 更新後の設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------- /api account
+  /api/account/logout-all:
+    post:
+      tags: [account]
+      operationId: logoutAllDevices
+      summary: 全端末からログアウトする（Cognito GlobalSignOut）
+      responses:
+        '204':
+          description: ログアウトした
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/account:
+    delete:
+      tags: [account]
+      operationId: deleteAccount
+      summary: 退会する
+      description: |
+        関連データを単一トランザクションで物理削除し、Secrets Managerの
+        `integration/{userId}/*` とCognitoユーザーを削除する。取り消しはできない。
+      responses:
+        '204':
+          description: 退会した
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/speech/transcribe:
+    post:
+      tags: [stub]
+      operationId: transcribeSpeech
+      summary: 録音データをテキスト化する（準備のみ）
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio:
+                  type: string
+                  contentMediaType: application/octet-stream
+                  description: 録音データ（最大1分・2MB程度。テキスト化後に即時破棄）
+      responses:
+        '200':
+          description: テキスト化結果（Feature Flag ON時）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscribeResult'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '501':
+          $ref: '#/components/responses/FeatureDisabled'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito User Poolが発行したJWT（アクセストークン）
+
+  parameters:
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    MemoId:
+      name: memoId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    RoutineId:
+      name: routineId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    Provider:
+      name: provider
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/CalendarProvider'
+    SuggestQuery:
+      name: q
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+    SuggestLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10
+        default: 5
+
+  responses:
+    ValidationError:
+      description: 入力が不正（code=VALIDATION_ERROR）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: JWTがない・不正・期限切れ（code=UNAUTHORIZED）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: 対象がない、または他ユーザーのデータ（code=NOT_FOUND）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: 現在の状態では実行できない（例：確認質問中でない計画への回答）（code=CONFLICT）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: 1日の生成上限を超えた（code=RATE_LIMITED）
+      headers:
+        Retry-After:
+          description: 上限がリセットされるまでの秒数（日本時間0時）
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ExternalServiceError:
+      description: 外部サービス（Bedrock・Google Maps・乗換案内・カレンダー）の失敗（code=EXTERNAL_SERVICE_ERROR）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    FeatureDisabled:
+      description: 準備のみの機能（code=FEATURE_DISABLED）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: サーバ内部エラー（code=INTERNAL_ERROR）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    # ------------------------------------------------ 共通
+    Id:
+      type: integer
+      format: int32
+      minimum: 1
+    DateTime:
+      type: string
+      format: date-time
+      examples: ['2026-11-02T13:00:00+09:00']
+    TimeOfDay:
+      type: string
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      description: HH:mm（24時間制）
+      examples: ['09:30']
+    LatLng:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          minimum: -180
+          maximum: 180
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_ERROR
+                - UNAUTHORIZED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - RATE_LIMITED
+                - EXTERNAL_SERVICE_ERROR
+                - FEATURE_DISABLED
+                - INTERNAL_ERROR
+            message:
+              type: string
+              description: 利用者向けに表示できる日本語メッセージ
+            details:
+              type: array
+              description: 入力エラーの項目別情報（VALIDATION_ERROR時）
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+            requestId:
+              type: string
+              description: 問い合わせ・ログ調査用のID
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          const: ok
+        version:
+          type: string
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, ng]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, ng, skipped]
+
+    # ------------------------------------------------ 列挙
+    WalkingSpeed:
+      type: string
+      enum: [slow, normal, fast]
+      description: 'DB値：slow=遅い / normal=標準 / fast=速い'
+    PriorityCondition:
+      type: string
+      enum: [on_time, save_money, points]
+      description: 'DB値：on_time=遅刻厳禁（初期値） / save_money=節約重視 / points=ポイント優先'
+    PlanStatus:
+      type: string
+      enum: [generating, clarifying, completed, error]
+      description: 'DB値：generating=生成中 / clarifying=確認質問中 / completed=完了 / error=エラー'
+    PlanItemType:
+      type: string
+      enum: [departure, move, stopover, errand, meal, return]
+      description: 'DB値：departure=出発 / move=移動 / stopover=立寄り / errand=用事 / meal=食事 / return=帰宅'
+    TransportMode:
+      type: string
+      enum: [walk, bicycle, car, train]
+      description: 'DB値：walk=徒歩 / bicycle=自転車 / car=車 / train=電車（バス・タクシーは対象外）'
+    SlotType:
+      type: string
+      enum: [DEPARTURE, OUTBOUND, MAIN, RETURN]
+    CalendarProvider:
+      type: string
+      enum: [google, outlook]
+    IntegrationStatus:
+      type: string
+      enum: [not_connected, connected, error]
+
+    # ------------------------------------------------ 行動計画
+    CreatePlanRequest:
+      type: object
+      required: [inputText]
+      additionalProperties: false
+      properties:
+        inputText:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: 用事の自然文
+          examples:
+            ['東京駅に13時に待ち合わせがあります。カレーの食材と排水口のネットを買いたいです。']
+    ClarifyRequest:
+      type: object
+      required: [answer]
+      additionalProperties: false
+      properties:
+        answer:
+          type: string
+          minLength: 1
+          maxLength: 500
+    ReviseRequest:
+      type: object
+      required: [instruction]
+      additionalProperties: false
+      properties:
+        instruction:
+          type: string
+          minLength: 1
+          maxLength: 500
+          examples: ['パンは買わなくていい']
+    ReplanRequest:
+      type: object
+      required: [delayMinutes]
+      additionalProperties: false
+      properties:
+        delayMinutes:
+          type: integer
+          minimum: 1
+          maximum: 240
+    DepartureDetectedRequest:
+      type: object
+      required: [actualDepartureTime]
+      additionalProperties: false
+      properties:
+        actualDepartureTime:
+          $ref: '#/components/schemas/DateTime'
+    Plan:
+      type: object
+      required: [id, status, inputText, targetDate, items, assumptions, quota, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/PlanStatus'
+        inputText:
+          type: string
+        targetDate:
+          type: string
+          format: date
+          description: 計画の対象日（当日・日本時間）
+        departureTime:
+          description: 自宅の出発時刻（completed時）
+          oneOf:
+            - $ref: '#/components/schemas/DateTime'
+            - type: 'null'
+        returnTime:
+          description: 帰宅時刻（completed時）
+          oneOf:
+            - $ref: '#/components/schemas/DateTime'
+            - type: 'null'
+        clarification:
+          description: 確認質問（clarifying時のみ）
+          oneOf:
+            - $ref: '#/components/schemas/Clarification'
+            - type: 'null'
+        assumptions:
+          type: array
+          description: 情報不足のため仮定した内容（画面に明示する）
+          items:
+            type: string
+        warnings:
+          type: array
+          description: 利用者に知らせる注意（例：駅出口情報が取得できなかった）
+          items:
+            type: string
+        items:
+          type: array
+          description: 行動項目（sequence順）。clarifying時は空
+          items:
+            $ref: '#/components/schemas/PlanItem'
+        quota:
+          $ref: '#/components/schemas/GenerationQuota'
+        createdAt:
+          $ref: '#/components/schemas/DateTime'
+        updatedAt:
+          $ref: '#/components/schemas/DateTime'
+    Clarification:
+      type: object
+      required: [question, count, maxCount]
+      properties:
+        question:
+          type: string
+          examples: ['何時までに渋谷に着けばよいですか？']
+        count:
+          type: integer
+          minimum: 1
+          maximum: 2
+          description: 何回目の確認質問か
+        maxCount:
+          type: integer
+          const: 2
+    GenerationQuota:
+      type: object
+      required: [used, limit, resetAt]
+      properties:
+        used:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          examples: [20]
+        resetAt:
+          $ref: '#/components/schemas/DateTime'
+    PlanItem:
+      type: object
+      required: [id, sequence, itemType, slotType, startTime, endTime]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        sequence:
+          type: integer
+          minimum: 1
+        itemType:
+          $ref: '#/components/schemas/PlanItemType'
+        slotType:
+          $ref: '#/components/schemas/SlotType'
+        startTime:
+          $ref: '#/components/schemas/DateTime'
+        endTime:
+          $ref: '#/components/schemas/DateTime'
+        title:
+          type: string
+          description: タイムラインの簡潔表示に使う見出し
+          examples: ['JR山手線で東京駅へ']
+        description:
+          type: string
+          description: 詳細展開時の説明
+        locationName:
+          type: string
+        location:
+          $ref: '#/components/schemas/LatLng'
+        transportMode:
+          $ref: '#/components/schemas/TransportMode'
+        route:
+          $ref: '#/components/schemas/Route'
+        stationExit:
+          type: string
+          description: 駅出口（乗換案内APIで確認できた場合のみ）
+          examples: ['八重洲北口']
+        boardingPosition:
+          type: string
+          description: 乗車位置（乗換案内APIで確認できた場合のみ）
+          examples: ['3号車付近']
+        store:
+          $ref: '#/components/schemas/Store'
+        purchaseItems:
+          type: array
+          description: この立寄りで買う品目（メモ・入力から抽出。DBには保存しない）
+          items:
+            type: string
+    Route:
+      type: object
+      required: [durationMinutes, steps]
+      properties:
+        distanceMeters:
+          type: integer
+          minimum: 0
+        durationMinutes:
+          type: integer
+          minimum: 0
+        fareYen:
+          type: integer
+          minimum: 0
+          description: 運賃（電車のみ）
+        polyline:
+          type: string
+          description: 地図描画用のエンコード済みポリライン
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteStep'
+    RouteStep:
+      type: object
+      required: [instruction, transportMode]
+      properties:
+        instruction:
+          type: string
+        transportMode:
+          $ref: '#/components/schemas/TransportMode'
+        lineName:
+          type: string
+          examples: ['JR山手線（外回り）']
+        fromStation:
+          type: string
+        toStation:
+          type: string
+        departureTime:
+          $ref: '#/components/schemas/DateTime'
+        arrivalTime:
+          $ref: '#/components/schemas/DateTime'
+        distanceMeters:
+          type: integer
+        durationMinutes:
+          type: integer
+    Store:
+      type: object
+      required: [placeId, name]
+      properties:
+        placeId:
+          type: string
+          description: Google Places のID
+        name:
+          type: string
+        address:
+          type: string
+        openNow:
+          type: boolean
+        pointProgramCode:
+          type: string
+          description: 優先選定に使ったポイントプログラム（該当時）
+
+    # ------------------------------------------------ プロファイル
+    FrequentStation:
+      type: object
+      required: [stationName]
+      properties:
+        stationCode:
+          type: string
+          description: 乗換案内APIの駅コード
+        stationName:
+          type: string
+          maxLength: 100
+        label:
+          type: string
+          maxLength: 50
+          description: 自宅・勤務先などのラベル（入力どおり）
+    Profile:
+      type: object
+      required:
+        - email
+        - onboardingCompleted
+        - walkingSpeed
+        - preparationTimeMinutes
+        - priorityCondition
+        - frequentStations
+      properties:
+        email:
+          type: string
+          format: email
+        onboardingCompleted:
+          type: boolean
+        homeAddress:
+          type: ['string', 'null']
+        homeLocation:
+          oneOf:
+            - $ref: '#/components/schemas/LatLng'
+            - type: 'null'
+        frequentStations:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/FrequentStation'
+        walkingSpeed:
+          $ref: '#/components/schemas/WalkingSpeed'
+        preparationTimeMinutes:
+          type: integer
+          minimum: 0
+          maximum: 180
+          description: 外出準備の目安時間（分）。初期値は詳細設計で確定
+        priorityCondition:
+          $ref: '#/components/schemas/PriorityCondition'
+        termsAcceptedAt:
+          description: 利用同意（オンボーディングStep6）の日時
+          oneOf:
+            - $ref: '#/components/schemas/DateTime'
+            - type: 'null'
+    ProfileUpdate:
+      type: object
+      additionalProperties: false
+      description: |
+        指定した項目のみ更新する。オンボーディング完了時は `homeAddress`・`homePlaceId`・
+        `acceptTerms=true` を必須とし、`onboardingCompleted` がtrueになる。
+      properties:
+        homeAddress:
+          type: string
+          minLength: 1
+          maxLength: 255
+        homePlaceId:
+          type: string
+          description: 住所サジェストで選んだ候補のID（座標の取得に使う）
+        frequentStations:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/FrequentStation'
+        walkingSpeed:
+          $ref: '#/components/schemas/WalkingSpeed'
+        preparationTimeMinutes:
+          type: integer
+          minimum: 0
+          maximum: 180
+        priorityCondition:
+          $ref: '#/components/schemas/PriorityCondition'
+        acceptTerms:
+          type: boolean
+          description: trueで利用同意を記録する（オンボーディングStep6）
+        completeOnboarding:
+          type: boolean
+          description: trueでオンボーディング完了とする
+    AddressSuggestionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [placeId, description]
+            properties:
+              placeId:
+                type: string
+              description:
+                type: string
+                examples: ['東京都千代田区丸の内1丁目']
+    StationSuggestionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [stationCode, stationName]
+            properties:
+              stationCode:
+                type: string
+              stationName:
+                type: string
+                examples: ['新宿']
+              prefecture:
+                type: string
+
+    # ------------------------------------------------ メモ
+    Memo:
+      type: object
+      required: [id, memoText, checkedLines, createdAt, updatedAt, expiresAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        memoText:
+          type: string
+          description: 改行区切りの本文。1行が1品目
+        checkedLines:
+          type: array
+          description: チェック済みの行番号（0始まり）
+          items:
+            type: integer
+            minimum: 0
+        createdAt:
+          $ref: '#/components/schemas/DateTime'
+        updatedAt:
+          $ref: '#/components/schemas/DateTime'
+        expiresAt:
+          description: 自動削除予定日時（作成から7日後）
+          $ref: '#/components/schemas/DateTime'
+    MemoCreate:
+      type: object
+      required: [memoText]
+      additionalProperties: false
+      properties:
+        memoText:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: 上限はDB定義書どおり255文字（2026-10-15決定）
+    MemoUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        memoText:
+          type: string
+          minLength: 1
+          maxLength: 255
+        checkedLines:
+          type: array
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 0
+    MemoList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Memo'
+
+    # ------------------------------------------------ ルーティン
+    RoutineInput:
+      type: object
+      required: [routineName]
+      additionalProperties: false
+      description: 開始・終了時刻は両方指定するか、両方省略する。開始＜終了であること
+      properties:
+        routineName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        locationName:
+          type: string
+          maxLength: 255
+        startTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        endTime:
+          $ref: '#/components/schemas/TimeOfDay'
+    Routine:
+      type: object
+      required: [id, routineName, skippedToday, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        routineName:
+          type: string
+        locationName:
+          type: ['string', 'null']
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/TimeOfDay'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/TimeOfDay'
+            - type: 'null'
+        skippedToday:
+          type: boolean
+          description: 当日分を単発スキップしているか（翌日は自動で解除）
+        createdAt:
+          $ref: '#/components/schemas/DateTime'
+        updatedAt:
+          $ref: '#/components/schemas/DateTime'
+    RoutineSkipRequest:
+      type: object
+      required: [skipped]
+      additionalProperties: false
+      properties:
+        skipped:
+          type: boolean
+          description: trueで当日分をスキップ、falseで取り消し
+    RoutineList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Routine'
+
+    # ------------------------------------------------ カレンダー連携
+    CalendarEvent:
+      type: object
+      required: [id, provider, title, startTime, endTime]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        provider:
+          $ref: '#/components/schemas/CalendarProvider'
+        title:
+          type: string
+        startTime:
+          $ref: '#/components/schemas/DateTime'
+        endTime:
+          $ref: '#/components/schemas/DateTime'
+        location:
+          type: ['string', 'null']
+    CalendarEventList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarEvent'
+    Integration:
+      type: object
+      required: [provider, status]
+      properties:
+        provider:
+          $ref: '#/components/schemas/CalendarProvider'
+        status:
+          $ref: '#/components/schemas/IntegrationStatus'
+        connectedAt:
+          oneOf:
+            - $ref: '#/components/schemas/DateTime'
+            - type: 'null'
+        lastSyncedAt:
+          oneOf:
+            - $ref: '#/components/schemas/DateTime'
+            - type: 'null'
+    IntegrationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Integration'
+    IntegrationStart:
+      type: object
+      required: [authorizationUrl]
+      properties:
+        authorizationUrl:
+          type: string
+          format: uri
+
+    # ------------------------------------------------ 設定
+    PrivacySettings:
+      type: object
+      required: [memoUsageConsent, locationUsageConsent, calendarUsageConsent]
+      additionalProperties: false
+      properties:
+        memoUsageConsent:
+          type: boolean
+          description: メモの内容を計画生成に使う
+        locationUsageConsent:
+          type: boolean
+          description: 位置情報を使う（Web版では出発検知なし）
+        calendarUsageConsent:
+          type: boolean
+          description: カレンダー予定を計画生成に使う
+    PointProgram:
+      type: object
+      required: [programCode, programName, isEnabled]
+      properties:
+        programCode:
+          type: string
+          description: |
+            プログラムの識別子。選択肢は次の6種（2026-10-15決定）：
+            rakuten=楽天ポイント / vpoint=Vポイント / dpoint=dポイント /
+            ponta=Ponta / waon=WAON POINT / nanaco=nanaco
+          enum: [rakuten, vpoint, dpoint, ponta, waon, nanaco]
+        programName:
+          type: string
+        storeChains:
+          type: array
+          items:
+            type: string
+        isEnabled:
+          type: boolean
+    PointProgramList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PointProgram'
+    PointProgramUpdate:
+      type: object
+      required: [enabledProgramCodes]
+      additionalProperties: false
+      properties:
+        enabledProgramCodes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [rakuten, vpoint, dpoint, ponta, waon, nanaco]
+    NotificationSettings:
+      type: object
+      required: [notificationEnabled, deliveryAvailable]
+      properties:
+        notificationEnabled:
+          type: boolean
+        deliveryAvailable:
+          type: boolean
+          description: 本リリースでは常にfalse（設定のみ保存し、配信しない）
+    NotificationSettingsUpdate:
+      type: object
+      required: [notificationEnabled]
+      additionalProperties: false
+      properties:
+        notificationEnabled:
+          type: boolean
+    TranscribeResult:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string

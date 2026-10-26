@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>2.2.3 行動計画結果画面</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/common.css" rel="stylesheet">
+</head>
+<body>
+  <div class="app-frame app-frame--result">
+    <header class="app-header">
+      <a href="2.2.2_ホーム入力画面.html" class="app-header__back" aria-label="戻る">←</a>
+      <h1 class="app-header__title">行動計画</h1>
+    </header>
+
+    <div class="result-layout" id="result-layout" data-layout="balanced">
+      <!-- 地図表示エリア -->
+      <section class="result-layout__map" aria-label="地図表示エリア">
+        <div id="map" class="result-layout__map-inner" role="img" aria-label="行動計画ルート地図"></div>
+        <p class="result-layout__remaining-time">
+          <span class="preparing-label">残り時間: --:--</span>
+          <span class="preparing-label">（準備中）</span>
+        </p>
+      </section>
+
+      <!-- タイムライン・操作パネル（ボトムシート） -->
+      <section class="result-layout__sheet" id="result-sheet" aria-label="タイムライン">
+        <div class="result-sheet__handle" id="result-sheet-handle" role="separator" aria-label="ドラッグで表示を切替" tabindex="0">
+          <span class="result-sheet__grabber"></span>
+        </div>
+
+        <div class="result-sheet__toolbar">
+          <span class="result-sheet__title">タイムライン</span>
+          <div class="result-layout__snap" role="tablist" aria-label="表示モード">
+            <button type="button" class="result-layout__snap-btn" role="tab" data-layout-snap="map-full" aria-selected="false" aria-label="地図を大きく">地図</button>
+            <button type="button" class="result-layout__snap-btn result-layout__snap-btn--active" role="tab" data-layout-snap="balanced" aria-selected="true" aria-label="地図とタイムラインを均等">均等</button>
+            <button type="button" class="result-layout__snap-btn" role="tab" data-layout-snap="timeline-full" aria-selected="false" aria-label="タイムラインを全画面">一覧</button>
+          </div>
+        </div>
+
+        <div class="result-sheet__scroll">
+          <div class="timeline-card timeline-card--flat">
+            <table class="table table-borderless mb-0">
+              <tbody>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">13:10</td>
+                  <td class="timeline-item__content">
+                    <div>自宅を出発</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">徒歩5分で最寄り駅へ向かいます。</div>
+                  </td>
+                </tr>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">13:15</td>
+                  <td class="timeline-item__content">
+                    <div>徒歩 → 吉祥寺駅</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">徒歩ルート: 約800m、5分</div>
+                  </td>
+                </tr>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">13:25</td>
+                  <td class="timeline-item__content">
+                    <div>電車（中央線）→ 新宿乗換</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">中央線快速 吉祥寺→新宿、乗換: 南口</div>
+                  </td>
+                </tr>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">13:55</td>
+                  <td class="timeline-item__content">
+                    <div>渋谷駅 ハチ公口 到着</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">山手線 新宿→渋谷、出口: ハチ公口</div>
+                    <button type="button" class="btn btn-sm btn-outline-danger mt-2">項目削除</button>
+                  </td>
+                </tr>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">14:00</td>
+                  <td class="timeline-item__content">
+                    <div>待ち合わせ（14:00-15:00）</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">渋谷駅ハチ公口付近で友人と待ち合わせ</div>
+                  </td>
+                </tr>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">15:10</td>
+                  <td class="timeline-item__content">
+                    <div>スーパーで買い物</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">帰路の最寄りスーパーに立ち寄り</div>
+                  </td>
+                </tr>
+                <tr class="timeline-item">
+                  <td class="timeline-item__time">16:30</td>
+                  <td class="timeline-item__content">
+                    <div>自宅到着</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" data-expand-timeline>詳細を展開</button>
+                    <div class="timeline-item__detail">渋谷→吉祥寺→自宅</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <section class="result-sheet__actions">
+            <label for="revise-input" class="form-label">用事修正入力</label>
+            <textarea class="form-control" id="revise-input" rows="2" maxlength="500" placeholder="修正内容を自然文で入力"></textarea>
+            <button type="button" class="btn btn--primary btn--full mt-2">修正実行</button>
+            <button type="button" class="btn btn-outline-secondary btn--full btn--preparing mt-2" disabled title="準備中">
+              延期／再計画<span class="preparing-label">（準備中）</span>
+            </button>
+          </section>
+
+          <div class="hidden">
+            <p class="error-message error-message--visible">取得に失敗しました</p>
+            <button type="button" class="btn btn-outline-secondary btn-sm">再試行</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="js/common.js"></script>
+</body>
+</html>

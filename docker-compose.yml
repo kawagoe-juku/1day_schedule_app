@@ -1,0 +1,22 @@
+# ローカル開発用のPostgreSQL（Aurora PostgreSQL 16 互換）
+services:
+  db:
+    image: postgres:16
+    container_name: schedule-app-db
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: schedule_app
+      TZ: Asia/Tokyo
+    ports:
+      - '5432:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U app -d schedule_app']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:

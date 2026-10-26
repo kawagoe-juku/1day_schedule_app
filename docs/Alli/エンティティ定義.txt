@@ -1,0 +1,330 @@
+# エンティティ定義
+
+## 概要
+
+本システムは、外出予定を自然文で入力することで、出発から帰宅までの行動計画を自動生成・提示するAIエージェント型アプリケーションである。主要なエンティティは、ユーザー（User）、行動計画（Plan）、行動項目（PlanItem）、スロット評価（SlotEvaluation）、AI対話履歴（AgentSession）、ルーティン（Routine）、メモ（Memo）、カレンダー連携（CalendarIntegration）、カレンダー予定キャッシュ（CalendarEvent）、出発検知記録（DepartureLog）、ポイントプログラム（PointProgram）の11個である。
+
+## エンティティ一覧
+
+### ユーザー / User
+
+- **説明**: システムを利用する一般利用者（エンドユーザー）
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| cognito_user_id | Cognito User PoolのユーザーID | string |  | ✕ | 外部サービス連携に必要な属性 |
+| email | メールアドレス | string |  | ✕ |  |
+| home_address | 自宅住所 | string |  | ✕ |  |
+| home_latitude | 自宅緯度 | number | double | ✕ |  |
+| home_longitude | 自宅経度 | number | double | ✕ |  |
+| frequently_used_stations | よく使う駅 | array |  | 〇 | items: { type: object, properties: { station_name: { type: string }, label: { type: string } } } 最大20件 |
+| walking_speed | 徒歩速度 | string |  | ✕ | enum: [遅い, 標準, 速い] |
+| preparation_time_minutes | 準備時間（分） | integer | int32 | ✕ |  |
+| priority_condition | 優先条件 | string |  | ✕ | enum: [遅刻厳禁, 節約重視, ポイント優先] |
+| memo_usage_consent | メモ利用同意 | boolean |  | ✕ |  |
+| location_usage_consent | 位置情報利用同意 | boolean |  | ✕ |  |
+| calendar_usage_consent | カレンダー予定利用同意 | boolean |  | ✕ |  |
+| notification_enabled | 通知設定 | boolean |  | ✕ |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: 認証の主体。オンボーディングで初期設定を行う。論理削除あり。
+
+### 行動計画 / Plan
+
+- **説明**: 家を出てから帰宅までの一連の行動を時系列で表した計画
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| input_text | 用事入力テキスト | string |  | ✕ | 最大500文字 |
+| departure_time | 出発時刻 | string | date-time | ✕ |  |
+| return_time | 帰宅時刻 | string | date-time | ✕ |  |
+| status | 状態 | string |  | ✕ | enum: [生成中, 確認質問中, 完了, エラー]。行動計画全体のライフサイクルを管理。 |
+| clarification_count | 確認質問回数 | integer | int32 | ✕ |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: トランザクションデータ。確認質問は最大2回まで。行動計画全体のステータスを一元管理し、個別の行動項目やスロット評価のステータスは持たない設計とすることで、データ同期リスクを排除。
+
+### 行動項目 / PlanItem
+
+- **説明**: 行動計画を構成する個々の行動（移動、立寄り、用事等）
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| plan_id | 行動計画ID | integer | int32 | ✕ |  |
+| sequence | 順序 | integer | int32 | ✕ |  |
+| item_type | 項目種別 | string |  | ✕ | enum: [出発, 移動, 立寄り, 用事, 食事, 帰宅] |
+| start_time | 開始時刻 | string | date-time | ✕ |  |
+| end_time | 終了時刻 | string | date-time | ✕ |  |
+| location_name | 場所名 | string |  | 〇 |  |
+| location_latitude | 場所緯度 | number | double | 〇 |  |
+| location_longitude | 場所経度 | number | double | 〇 |  |
+| transport_mode | 移動手段 | string |  | 〇 | enum: [徒歩, 自転車, 車, 電車, バス] |
+| route_detail | ルート詳細 | object |  | 〇 | properties: { steps: { type: array, items: { type: object } }, distance_meters: { type: integer }, duration_minutes: { type: integer } } |
+| station_exit | 駅出口 | string |  | 〇 |  |
+| boarding_position | 乗車位置 | string |  | 〇 |  |
+| description | 説明 | string |  | 〇 |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: トランザクションデータ。行動計画に紐づく。個別のステータスは持たず、親の行動計画のステータスで管理される。
+
+### スロット評価 / SlotEvaluation
+
+- **説明**: 行動計画テンプレート上で評価対象となる個々の項目枠の評価結果
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| plan_id | 行動計画ID | integer | int32 | ✕ |  |
+| slot_type | スロット種別 | string |  | ✕ | enum: [DEPARTURE, OUTBOUND, MAIN, RETURN] |
+| slot_name | スロット名 | string |  | ✕ |  |
+| evaluation_order | 評価順序 | integer | int32 | ✕ |  |
+| is_evaluated | 評価済みフラグ | boolean |  | ✕ |  |
+| evaluation_result | 評価結果 | string |  | 〇 |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: AIがスロット検討を省略できない構造を担保するための監査ログ。評価済みフラグで評価の有無を記録し、親の行動計画のステータスとは独立して管理。
+
+### AI対話履歴 / AgentSession
+
+- **説明**: AI対話履歴を保持するデータ（生プロンプト全文は保存せず、要約・判定結果を保存）
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| plan_id | 行動計画ID | integer | int32 | ✕ |  |
+| session_type | セッション種別 | string |  | ✕ | enum: [意図解析, 確認質問, 行動計画組立, 再計画] |
+| input_summary | 入力要約 | string |  | ✕ |  |
+| output_summary | 出力要約 | string |  | ✕ |  |
+| judgment_result | 判定結果 | string |  | 〇 |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: 監査ログ。個人情報を含む生プロンプト全文は保存しない。
+
+### ルーティン / Routine
+
+- **説明**: ユーザーが定期的に行う行動をあらかじめ登録し、行動計画に反映する機能・データ
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| routine_name | ルーティン名 | string |  | ✕ |  |
+| location_name | 場所 | string |  | 〇 |  |
+| start_time | 開始時刻 | string | date-time | 〇 |  |
+| end_time | 終了時刻 | string | date-time | 〇 |  |
+| is_skipped | 単発スキップフラグ | boolean |  | ✕ |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: マスタデータ。単発スキップに対応。
+
+### メモ / Memo
+
+- **説明**: 付箋形式のメモ機能。買い物品目はメモ内の1行として管理し、独立データとしては持たない。作成から1週間で自動削除される。
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| memo_text | メモ本文 | string |  | ✕ | 自然文・箇条書き・絵文字可 |
+| checked_lines | チェック済み行 | array |  | 〇 | items: { type: integer } 行番号の配列 |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: トランザクションデータ。作成から1週間で日次バッチにより自動削除。オフライン時はローカル一時保存し、復帰時に同期。
+
+### カレンダー連携 / CalendarIntegration
+
+- **説明**: Google Calendar／Outlookカレンダーとの連携設定
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| provider | プロバイダー | string |  | ✕ | enum: [Google, Outlook] |
+| external_account_id | 外部アカウントID | string |  | ✕ | 外部サービス連携に必要な属性 |
+| access_token_secret_arn | アクセストークンSecrets Manager ARN | string |  | ✕ | 外部サービス連携に必要な属性 |
+| refresh_token_secret_arn | リフレッシュトークンSecrets Manager ARN | string |  | 〇 | 外部サービス連携に必要な属性 |
+| token_expires_at | トークン有効期限 | string | date-time | 〇 | 外部サービス連携に必要な属性 |
+| is_active | 連携有効フラグ | boolean |  | ✕ |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: マスタデータ。OAuthトークン本体はSecrets Managerで管理。
+
+### カレンダー予定キャッシュ / CalendarEvent
+
+- **説明**: カレンダー予定の当日分をキャッシュするテーブル
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| calendar_integration_id | カレンダー連携ID | integer | int32 | ✕ |  |
+| external_event_id | 外部イベントID | string |  | ✕ |  |
+| event_title | 予定件名 | string |  | ✕ |  |
+| start_time | 開始時刻 | string | date-time | ✕ |  |
+| end_time | 終了時刻 | string | date-time | ✕ |  |
+| location | 場所 | string |  | 〇 |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: キャッシュデータ。当日分のみ保持。
+
+### 出発検知記録 / DepartureLog
+
+- **説明**: 出発検知の実績を記録するデータ。準備時間学習に用いる。
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| plan_id | 行動計画ID | integer | int32 | ✕ |  |
+| planned_departure_time | 計画出発時刻 | string | date-time | ✕ |  |
+| actual_departure_time | 実際の出発時刻 | string | date-time | ✕ |  |
+| preparation_time_minutes | 準備時間（分） | integer | int32 | ✕ |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: トランザクションデータ。準備時間学習用。再計画のトリガーではない。
+
+### ポイントプログラム / PointProgram
+
+- **説明**: ユーザーが利用する店舗のポイント制度設定。店舗優先選定の判断材料となる。
+
+| 属性名 | 説明 | 型 | フォーマット | Null許容 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| id | 一意識別子 | integer | int32 | ✕ |  |
+| user_id | ユーザーID | integer | int32 | ✕ |  |
+| program_name | プログラム名 | string |  | ✕ |  |
+| store_chain | 店舗チェーン | string |  | 〇 |  |
+| is_enabled | 有効フラグ | boolean |  | ✕ |  |
+| created_at | 作成日時 | string | date-time | ✕ |  |
+| updated_at | 更新日時 | string | date-time | ✕ |  |
+| created_by_user_id | 作成者ユーザーID | integer | int32 | 〇 |  |
+| updated_by_user_id | 最終更新者ユーザーID | integer | int32 | 〇 |  |
+| is_deleted | 削除フラグ | boolean |  | ✕ |  |
+| deleted_at | 削除日時 | string | date-time | 〇 |  |
+
+- **備考**: マスタデータ。店舗優先選定に用いる。
+
+## リレーション
+
+| エンティティA | 関係 | エンティティB | 説明 |
+|---------------|------|---------------|------|
+| User | 1 : N | Plan | ユーザーは複数の行動計画を持つ |
+| Plan | 1 : N | PlanItem | 行動計画は複数の行動項目を持つ |
+| Plan | 1 : N | SlotEvaluation | 行動計画は複数のスロット評価を持つ |
+| Plan | 1 : N | AgentSession | 行動計画は複数のAI対話履歴を持つ |
+| User | 1 : N | Routine | ユーザーは複数のルーティンを持つ |
+| User | 1 : N | Memo | ユーザーは複数のメモを持つ |
+| User | 1 : N | CalendarIntegration | ユーザーは複数のカレンダー連携を持つ |
+| CalendarIntegration | 1 : N | CalendarEvent | カレンダー連携は複数のカレンダー予定キャッシュを持つ |
+| User | 1 : N | DepartureLog | ユーザーは複数の出発検知記録を持つ |
+| Plan | 1 : N | DepartureLog | 行動計画は複数の出発検知記録を持つ |
+| User | 1 : N | PointProgram | ユーザーは複数のポイントプログラムを持つ |
+
+## 未確定事項
+
+- [x] 乗換案内APIの契約形態・精度が未確定（リスク項目）
+
+  **回答（2026-08-31）**:
+  - **契約形態**: 第一候補は **Ekispert API for Amazon（買い切り型）** とする（見積書・詳細設計の方向性）。NAVITIME等の企業向け直接契約は小規模利用にはハードルが高く、代替検証をリスク項目として継続管理する。
+  - **用途**: 乗換経路検索、駅名サジェスト（GET /api/geo/station-suggestions）、駅出口・乗車位置情報の取得（AI連携基盤 TransitRouteTool / StationExitTool 経由）。
+  - **精度・可用性**: 商用契約締結および結合試験フェーズで、主要利用エリア（首都圏等）における経路精度・駅出口情報の取得可否を検証する。API返却値に不足がある場合は、確認質問または徒歩ルート（Google Maps Routes）で代替し、AI推測のみの駅名・出口は提示しない（ハルシネーション対策）。
+  - **残リスク**: 契約条件・API呼び出し上限・運行情報連携の精度は、開発初期のPoC完了時点で再評価する。
+
+- [x] 音声認識サービスの具体的なサービス名が未確定
+
+  **回答（2026-08-31）**:
+  - **方針（確定）**: クライアントOS標準の音声認識APIは使用しない。録音データをサーバーへアップロードし、**サーバー側でテキスト化**する（要件定義書・ヒアリングシート確定）。
+  - **本リリースの扱い**: **実装準備のみ**（Feature Flag OFF）。POST /api/speech/transcribe はAPIスタブとして骨格のみ提供し、UI入口（音声入力ボタン）は disabled 表示。
+  - **具体サービス**: **Amazon Transcribe 等を第一候補**とするが、選定は本リリーススコープ外。準備フェーズ完了時または次フェーズで、対応言語（ja-JP）、レイテンシ、コスト、1分/2MB程度の上限を基準に確定する。
+  - **補足**: 音声録音ファイルはテキスト化完了後に**即時破棄**し、永続保存しない（要件定義書 3.2.2）。
+
+- [x] カレンダー連携のトークン管理（Secrets Manager ARN）の妥当性確認が必要
+
+  **回答（2026-08-31）**:
+  - **結論**: OAuthトークン本体を **AWS Secrets Manager** に保持し、Aurora（external_integrations）には **メタデータのみ** を保存する方針は **妥当**（要件定義書 3.2.2・DB設計 4.2 準拠）。
+  - **IF／DB上の属性**: 本エンティティ定義の `access_token_secret_arn` / `refresh_token_secret_arn` は、物理設計では **`secret_name`（シークレット名）1件** に集約する。命名例: `integration/{user_id}/{provider}`。ARNの直持ちは行わず、Secrets Manager SDK は secret_name で参照する。
+  - **Aurora側で保持する項目**: provider、status（CONNECTED / DISCONNECTED / ERROR）、secret_name、scope、connected_at、last_synced_at、last_error、created_at、updated_at。
+  - **トークン有効期限**: OAuthプロバイダから取得した expiry は Secrets Manager 内のトークンJSONに含め、必要に応じて refresh 処理で更新する。Auroraには last_synced_at のみキャッシュ可。
+  - **退会時**: DELETE /api/account 実行時に Secrets Manager 上の `integration/{user_id}/*` を prefix 削除する（APIサービス詳細設計 7.2 準拠）。
+
+- [x] 外部サービス連携に必要な属性（cognito_user_id、external_account_id、access_token_secret_arn等）の妥当性確認が必要
+
+  **回答（2026-08-31）**:
+  - **cognito_user_id**: **妥当**。ただし integer 型の User.id とは別に、全テーブルの `user_id` は **Cognito sub（string）** として統一する（DB設計・JWT検証方針）。エンティティ定義上の `cognito_user_id` は `user_profiles.user_id` に相当し、APIレスポンスでは JWT から解決するため **クライアントへ返却しない**。
+  - **external_account_id**: Google / Outlook 連携時に外部側のアカウント識別子が必要だが、**APIレスポンスおよび Aurora カラムとしては必須にしない**。Secrets Manager 内のトークンJSON、または OAuth 連携完了時の内部メタデータとして保持する。プロバイダごとに1アカウントのみ（UNIQUE user_id + provider）の制約で十分。
+  - **access_token_secret_arn / refresh_token_secret_arn**: **概念は妥当だが、物理設計では secret_name 1件に集約**（上記カレンダー連携の回答参照）。IF仕様書・OpenAPI スキーマでは `secretName` をサーバー内部属性とし、外部公開しない。
+  - **その他の外部連携属性**:
+    - Google Maps APIキー: サーバー用・クライアント用（3種）を Secrets Manager / ビルド設定で分離管理（要件定義書 4.3.1）。
+    - 乗換案内APIキー: サーバー用 Secrets Manager 管理。
+    - Bedrock / Cognito: AWS SDK 経由。IFエンドポイントとしては設計しない（Cognito 認証は Amplify Flutter 直接利用）。
+
+## 正規化対応の説明
+
+本エンティティ定義は、以下の正規化観点で確認を行いました。
+
+### 観点1：複数エンティティ間でのデータ同期リスク
+
+行動計画（Plan）と行動項目（PlanItem）、スロット評価（SlotEvaluation）の関係において、ステータス管理の責務を明確に分離しました。行動計画全体のライフサイクル（生成中、確認質問中、完了、エラー）は親エンティティであるPlanのstatusで一元管理し、子エンティティであるPlanItemやSlotEvaluationには独自のステータスを持たせない設計としています。これにより、複数エンティティ間でのステータス同期の問題を排除しています。
+
+SlotEvaluationのis_evaluatedフラグは、AIの評価プロセスの監査ログとして独立した目的を持つため、Planのstatusとは別に保持しています。
+
+### 観点2〜5：その他の正規化観点
+
+- 繰り返し属性の分離：frequently_used_stationsやchecked_linesは配列型で適切に管理されており、問題ありません。
+- 部分関数従属・推移的関数従属：各エンティティは単一の主キー（id）に対して全属性が完全関数従属しており、第2正規形・第3正規形を満たしています。
+- 冗長なリレーション：N:N関係は適切に中間テーブルで解決されており、業務上必要な直接的なFK（user_id、plan_id等）は維持しています。
+
+以上の確認により、本エンティティ定義は正規化の観点から問題がないことを確認しました。
