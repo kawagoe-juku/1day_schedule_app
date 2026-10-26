@@ -1,0 +1,37 @@
+{
+  "name": "ai-schedule-app",
+  "private": true,
+  "description": "AIスケジュール外出支援サービス（Web版）",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "server",
+    "infra"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w server",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present && prettier --check server infra scripts api",
+    "format": "prettier --write server infra scripts api",
+    "api:check": "node scripts/check-openapi.mjs api/openapi.yaml",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:psql": "docker compose exec db psql -U app -d schedule_app",
+    "infra:release": "bash scripts/infra-deploy.sh",
+    "app:setup": "bash scripts/setup-flutter-mac.sh",
+    "app:dev": "cd app && flutter run -d chrome",
+    "app:test": "cd app && flutter analyze && flutter test",
+    "app:build": "cd app && flutter build web",
+    "tools:setup": "bash scripts/setup-tools-mac.sh",
+    "aws:check": "bash scripts/aws-check.sh",
+    "dev:token": "node scripts/dev-token.mjs"
+  },
+  "devDependencies": {
+    "amazon-cognito-identity-js": "^6.3.22",
+    "prettier": "^3.4.2",
+    "yaml": "^2.6.1"
+  }
+}

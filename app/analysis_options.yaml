@@ -1,0 +1,7 @@
+# 静的解析（`flutter analyze`）の設定。Flutter 推奨の lint を使う。
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    - web/**

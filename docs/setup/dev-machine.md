@@ -1,0 +1,70 @@
+# 開発端末のセットアップ（macOS）
+
+開発端末のセットアップ手順。上から順に実施する。AWS を使わない作業（ローカルでのサーバ・画面の開発）だけなら 1〜4 で足りる。
+
+## 1. Homebrew
+
+未導入の場合は <https://brew.sh/ja/> の手順でインストールする。
+
+## 2. Node.js 22
+
+```bash
+brew install nvm
+mkdir -p ~/.nvm
+# 表示される案内に従い ~/.zshrc に nvm の設定を追記してから、ターミナルを開き直す
+cd <このリポジトリ>
+nvm install    # .nvmrc の 22 をインストール
+nvm use
+node -v        # v22.x.x
+```
+
+## 3. Docker Desktop
+
+<https://www.docker.com/products/docker-desktop/> からインストールし、起動しておく。
+
+```bash
+docker compose version
+```
+
+## 4. Flutter SDK（Web）
+
+リポジトリ直下で `npm run app:setup`（= `bash scripts/setup-flutter-mac.sh`）を実行すると、インストールから `app/` の動作確認（依存取得・静的解析・テスト・ビルド）までを一度に行う。手動で行う場合は次のとおり。
+
+```bash
+brew install --cask flutter
+flutter config --enable-web
+flutter doctor
+```
+
+`flutter doctor` で「Chrome - develop for the web」と「Flutter」にチェックが付いていればよい。Xcode・Android Studio の警告は Web版では無視してよい。
+
+自動デプロイは `infra/lib/config.ts` の `FLUTTER_VERSION` の版でビルドする。手元の版（`flutter --version`）がこれより新しいときは、`FLUTTER_VERSION` を合わせて上げる。
+
+## 5. AWS CLI と AWS CDK
+
+リポジトリ直下で `npm run tools:setup`（= `bash scripts/setup-tools-mac.sh`）を実行すると、AWS CLI と CDK を管理者権限なしでユーザー領域に入れ、Docker の状況も確認する。手動で行う場合は次のとおり。
+
+```bash
+brew install awscli
+npm install -g aws-cdk
+aws --version
+cdk --version
+```
+
+## 6. AWS の認証情報
+
+管理者から CLI 用ユーザー（`schedule-app-cli`）のアクセスキーを受け取り、プロファイル `schedule-app-dev` に設定する。ユーザーの分け方と権限は [`aws-account.md`](aws-account.md) を参照。
+
+```bash
+aws configure --profile schedule-app-dev
+# リージョンは ap-northeast-1
+aws sts get-caller-identity --profile schedule-app-dev   # Arn が .../user/schedule-app-cli
+npm run aws:check                                        # 状態の確認（結果は logs/aws-check.log）
+```
+
+## 完了の確認
+
+- [ ] `flutter doctor` で Web のチェックがすべて OK
+- [ ] `aws sts get-caller-identity --profile schedule-app-dev` が `schedule-app-cli` で成功する
+- [ ] `cdk --version` が実行できる
+- [ ] リポジトリで `npm install` → `npm test` が通る

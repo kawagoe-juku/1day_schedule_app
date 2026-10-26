@@ -1,0 +1,594 @@
+情報源: IF仕様書『エンティティ定義』→『エンティティ一覧』を使用
+
+#  データベース定義書
+
+## 1. データベース基本情報
+
+### 1.1 システム概要
+本システム「AIスケジュール外出支援サービス」は、外出予定を自然文で入力することで、出発から帰宅までの行動計画を自動生成・提示するAIエージェント型アプリケーションである。主要エンティティは、ユーザー、行動計画、行動項目、スロット評価、AI対話履歴、ルーティン、メモ、カレンダー連携、カレンダー予定キャッシュ、出発検知記録、ポイントプログラムの11個である。
+
+### 1.2 データベース情報
+- **DBMS**: 未定
+- **文字コード**: UTF-8 (utf8mb4)
+- **照合順序**: utf8mb4_general_ci
+- **エンジン**: InnoDB（MySQLの場合）
+
+## 2. テーブル定義
+
+### 2.1 user（ユーザー）テーブル
+
+**説明**: システムを利用する一般利用者（エンドユーザー）。認証の主体。オンボーディングで初期設定を行う。論理削除あり。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| cognito_user_id | Cognito User PoolのユーザーID | VARCHAR(255) | NO | - | 外部サービス連携に必要な属性 |
+| email | メールアドレス | VARCHAR(255) | NO | - | メールアドレス |
+| home_address | 自宅住所 | VARCHAR(255) | NO | - | 自宅住所 |
+| home_latitude | 自宅緯度 | DOUBLE | NO | - | 自宅緯度 |
+| home_longitude | 自宅経度 | DOUBLE | NO | - | 自宅経度 |
+| frequently_used_stations | よく使う駅 | JSON | YES | - | items: { station_name, label } 最大20件 |
+| walking_speed | 徒歩速度 | VARCHAR(20) | NO | - | CHECK: '遅い','標準','速い' |
+| preparation_time_minutes | 準備時間（分） | INT | NO | - | 準備時間（分） |
+| priority_condition | 優先条件 | VARCHAR(20) | NO | - | CHECK: '遅刻厳禁','節約重視','ポイント優先' |
+| memo_usage_consent | メモ利用同意 | TINYINT(1) | NO | - | メモ利用同意 |
+| location_usage_consent | 位置情報利用同意 | TINYINT(1) | NO | - | 位置情報利用同意 |
+| calendar_usage_consent | カレンダー予定利用同意 | TINYINT(1) | NO | - | カレンダー予定利用同意 |
+| notification_enabled | 通知設定 | TINYINT(1) | NO | - | 通知設定 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.2 plan（行動計画）テーブル
+
+**説明**: 家を出てから帰宅までの一連の行動を時系列で表した計画。トランザクションデータ。確認質問は最大2回まで。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| input_text | 用事入力テキスト | VARCHAR(500) | NO | - | 最大500文字 |
+| departure_time | 出発時刻 | DATETIME | NO | - | 出発時刻 |
+| return_time | 帰宅時刻 | DATETIME | NO | - | 帰宅時刻 |
+| status | 状態 | VARCHAR(20) | NO | - | CHECK: '生成中','確認質問中','完了','エラー'。行動計画全体のライフサイクルを管理 |
+| clarification_count | 確認質問回数 | INT | NO | - | 確認質問回数 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.3 plan_item（行動項目）テーブル
+
+**説明**: 行動計画を構成する個々の行動（移動、立寄り、用事等）。トランザクションデータ。行動計画に紐づく。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| plan_id | 行動計画ID | INT | NO | - | FOREIGN KEY → plan.id |
+| sequence | 順序 | INT | NO | - | 順序 |
+| item_type | 項目種別 | VARCHAR(20) | NO | - | CHECK: '出発','移動','立寄り','用事','食事','帰宅' |
+| start_time | 開始時刻 | DATETIME | NO | - | 開始時刻 |
+| end_time | 終了時刻 | DATETIME | NO | - | 終了時刻 |
+| location_name | 場所名 | VARCHAR(255) | YES | - | 場所名 |
+| location_latitude | 場所緯度 | DOUBLE | YES | - | 場所緯度 |
+| location_longitude | 場所経度 | DOUBLE | YES | - | 場所経度 |
+| transport_mode | 移動手段 | VARCHAR(20) | YES | - | CHECK: '徒歩','自転車','車','電車','バス' |
+| route_detail | ルート詳細 | JSON | YES | - | properties: { steps, distance_meters, duration_minutes } |
+| station_exit | 駅出口 | VARCHAR(255) | YES | - | 駅出口 |
+| boarding_position | 乗車位置 | VARCHAR(255) | YES | - | 乗車位置 |
+| description | 説明 | VARCHAR(255) | YES | - | 説明 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.4 slot_evaluation（スロット評価）テーブル
+
+**説明**: 行動計画テンプレート上で評価対象となる個々の項目枠の評価結果。AIがスロット検討を省略できない構造を担保するための監査ログ。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| plan_id | 行動計画ID | INT | NO | - | FOREIGN KEY → plan.id |
+| slot_type | スロット種別 | VARCHAR(20) | NO | - | CHECK: 'DEPARTURE','OUTBOUND','MAIN','RETURN' |
+| slot_name | スロット名 | VARCHAR(255) | NO | - | スロット名 |
+| evaluation_order | 評価順序 | INT | NO | - | 評価順序 |
+| is_evaluated | 評価済みフラグ | TINYINT(1) | NO | - | 評価済みフラグ |
+| evaluation_result | 評価結果 | VARCHAR(255) | YES | - | 評価結果 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.5 agent_session（AI対話履歴）テーブル
+
+**説明**: AI対話履歴を保持するデータ（生プロンプト全文は保存せず、要約・判定結果を保存）。監査ログ。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| plan_id | 行動計画ID | INT | NO | - | FOREIGN KEY → plan.id |
+| session_type | セッション種別 | VARCHAR(20) | NO | - | CHECK: '意図解析','確認質問','行動計画組立','再計画' |
+| input_summary | 入力要約 | VARCHAR(255) | NO | - | 入力要約 |
+| output_summary | 出力要約 | VARCHAR(255) | NO | - | 出力要約 |
+| judgment_result | 判定結果 | VARCHAR(255) | YES | - | 判定結果 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.6 routine（ルーティン）テーブル
+
+**説明**: ユーザーが定期的に行う行動をあらかじめ登録し、行動計画に反映する機能・データ。マスタデータ。単発スキップに対応。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| routine_name | ルーティン名 | VARCHAR(255) | NO | - | ルーティン名 |
+| location_name | 場所 | VARCHAR(255) | YES | - | 場所 |
+| start_time | 開始時刻 | DATETIME | YES | - | 開始時刻 |
+| end_time | 終了時刻 | DATETIME | YES | - | 終了時刻 |
+| is_skipped | 単発スキップフラグ | TINYINT(1) | NO | - | 単発スキップフラグ |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.7 memo（メモ）テーブル
+
+**説明**: 付箋形式のメモ機能。買い物品目はメモ内の1行として管理。作成から1週間で自動削除される。トランザクションデータ。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| memo_text | メモ本文 | VARCHAR(255) | NO | - | 自然文・箇条書き・絵文字可 |
+| checked_lines | チェック済み行 | JSON | YES | - | items: integer 行番号の配列 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.8 calendar_integration（カレンダー連携）テーブル
+
+**説明**: Google Calendar／Outlookカレンダーとの連携設定。マスタデータ。OAuthトークン本体はSecrets Managerで管理。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| provider | プロバイダー | VARCHAR(20) | NO | - | CHECK: 'Google','Outlook' |
+| external_account_id | 外部アカウントID | VARCHAR(255) | NO | - | 外部サービス連携に必要な属性 |
+| access_token_secret_arn | アクセストークンSecrets Manager ARN | VARCHAR(255) | NO | - | 外部サービス連携に必要な属性 |
+| refresh_token_secret_arn | リフレッシュトークンSecrets Manager ARN | VARCHAR(255) | YES | - | 外部サービス連携に必要な属性 |
+| token_expires_at | トークン有効期限 | DATETIME | YES | - | 外部サービス連携に必要な属性 |
+| is_active | 連携有効フラグ | TINYINT(1) | NO | - | 連携有効フラグ |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.9 calendar_event（カレンダー予定キャッシュ）テーブル
+
+**説明**: カレンダー予定の当日分をキャッシュするテーブル。キャッシュデータ。当日分のみ保持。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| calendar_integration_id | カレンダー連携ID | INT | NO | - | FOREIGN KEY → calendar_integration.id |
+| external_event_id | 外部イベントID | VARCHAR(255) | NO | - | 外部イベントID |
+| event_title | 予定件名 | VARCHAR(255) | NO | - | 予定件名 |
+| start_time | 開始時刻 | DATETIME | NO | - | 開始時刻 |
+| end_time | 終了時刻 | DATETIME | NO | - | 終了時刻 |
+| location | 場所 | VARCHAR(255) | YES | - | 場所 |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.10 departure_log（出発検知記録）テーブル
+
+**説明**: 出発検知の実績を記録するデータ。準備時間学習に用いる。トランザクションデータ。再計画のトリガーではない。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| plan_id | 行動計画ID | INT | NO | - | FOREIGN KEY → plan.id |
+| planned_departure_time | 計画出発時刻 | DATETIME | NO | - | 計画出発時刻 |
+| actual_departure_time | 実際の出発時刻 | DATETIME | NO | - | 実際の出発時刻 |
+| preparation_time_minutes | 準備時間（分） | INT | NO | - | 準備時間（分） |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+### 2.11 point_program（ポイントプログラム）テーブル
+
+**説明**: ユーザーが利用する店舗のポイント制度設定。店舗優先選定の判断材料となる。マスタデータ。
+
+| カラム名 | 論理名 | データ型 | NULL | デフォルト | 説明 |
+|---------|--------|----------|------|------------|------|
+| id | 一意識別子 | INT | NO | AUTO_INCREMENT | PRIMARY KEY |
+| user_id | ユーザーID | INT | NO | - | FOREIGN KEY → user.id |
+| program_name | プログラム名 | VARCHAR(255) | NO | - | プログラム名 |
+| store_chain | 店舗チェーン | VARCHAR(255) | YES | - | 店舗チェーン |
+| is_enabled | 有効フラグ | TINYINT(1) | NO | - | 有効フラグ |
+| created_at | 作成日時 | DATETIME | NO | - | 作成日時 |
+| updated_at | 更新日時 | DATETIME | NO | - | 更新日時 |
+| created_by_user_id | 作成者ユーザーID | INT | YES | - | 作成者ユーザーID |
+| updated_by_user_id | 最終更新者ユーザーID | INT | YES | - | 最終更新者ユーザーID |
+| is_deleted | 削除フラグ | TINYINT(1) | NO | - | 削除フラグ |
+| deleted_at | 削除日時 | DATETIME | YES | NULL | 削除日時 |
+
+## 3. インデックス定義
+
+### 3.1 user テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+
+### 3.2 plan テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_plan_user_id | user_id | INDEX | 外部キー・ユーザー別絞り込み用 |
+
+### 3.3 plan_item テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_plan_item_plan_id_sequence | plan_id, sequence | INDEX | 行動計画別の時系列表示用 |
+
+### 3.4 slot_evaluation テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_slot_evaluation_plan_id_evaluation_order | plan_id, evaluation_order | INDEX | 行動計画別の評価順序表示用 |
+
+### 3.5 agent_session テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_agent_session_plan_id | plan_id | INDEX | 外部キー・行動計画別絞り込み用 |
+
+### 3.6 routine テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_routine_user_id | user_id | INDEX | 外部キー・ユーザー別絞り込み用 |
+
+### 3.7 memo テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_memo_user_id_created_at | user_id, created_at | INDEX | ユーザー別・作成日時での絞り込み／自動削除用 |
+
+### 3.8 calendar_integration テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| uq_calendar_integration_user_id_provider | user_id, provider | UNIQUE | ユーザー・プロバイダーごとに1件制約 |
+
+### 3.9 calendar_event テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_calendar_event_user_id | user_id | INDEX | 外部キー・ユーザー別絞り込み用 |
+| idx_calendar_event_calendar_integration_id | calendar_integration_id | INDEX | 外部キー・連携別絞り込み用 |
+
+### 3.10 departure_log テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_departure_log_user_id | user_id | INDEX | 外部キー・ユーザー別絞り込み用 |
+| idx_departure_log_plan_id | plan_id | INDEX | 外部キー・行動計画別絞り込み用 |
+
+### 3.11 point_program テーブル
+
+| インデックス名 | カラム | 種別 | 説明 |
+|--------------|--------|------|------|
+| PRIMARY | id | PRIMARY KEY | 主キー |
+| idx_point_program_user_id | user_id | INDEX | 外部キー・ユーザー別絞り込み用 |
+
+## 4. 外部キー制約
+
+| 制約名 | 子テーブル | 子カラム | 親テーブル | 親カラム | ON DELETE |
+|--------|------------|----------|------------|----------|-----------|
+| fk_plan_user_id | plan | user_id | user | id | RESTRICT |
+| fk_plan_item_plan_id | plan_item | plan_id | plan | id | RESTRICT |
+| fk_slot_evaluation_plan_id | slot_evaluation | plan_id | plan | id | RESTRICT |
+| fk_agent_session_plan_id | agent_session | plan_id | plan | id | RESTRICT |
+| fk_routine_user_id | routine | user_id | user | id | RESTRICT |
+| fk_memo_user_id | memo | user_id | user | id | RESTRICT |
+| fk_calendar_integration_user_id | calendar_integration | user_id | user | id | RESTRICT |
+| fk_calendar_event_user_id | calendar_event | user_id | user | id | RESTRICT |
+| fk_calendar_event_calendar_integration_id | calendar_event | calendar_integration_id | calendar_integration | id | RESTRICT |
+| fk_departure_log_user_id | departure_log | user_id | user | id | RESTRICT |
+| fk_departure_log_plan_id | departure_log | plan_id | plan | id | RESTRICT |
+| fk_point_program_user_id | point_program | user_id | user | id | RESTRICT |
+
+## 5. ER図
+
+```mermaid
+erDiagram
+    user ||--o{ plan : "1:N ユーザーは複数の行動計画を持つ"
+    plan ||--o{ plan_item : "1:N 行動計画は複数の行動項目を持つ"
+    plan ||--o{ slot_evaluation : "1:N 行動計画は複数のスロット評価を持つ"
+    plan ||--o{ agent_session : "1:N 行動計画は複数のAI対話履歴を持つ"
+    user ||--o{ routine : "1:N ユーザーは複数のルーティンを持つ"
+    user ||--o{ memo : "1:N ユーザーは複数のメモを持つ"
+    user ||--o{ calendar_integration : "1:N ユーザーは複数のカレンダー連携を持つ"
+    calendar_integration ||--o{ calendar_event : "1:N カレンダー連携は複数のカレンダー予定キャッシュを持つ"
+    user ||--o{ departure_log : "1:N ユーザーは複数の出発検知記録を持つ"
+    plan ||--o{ departure_log : "1:N 行動計画は複数の出発検知記録を持つ"
+    user ||--o{ point_program : "1:N ユーザーは複数のポイントプログラムを持つ"
+
+    user {
+        INT id PK
+        VARCHAR cognito_user_id
+        VARCHAR email
+        VARCHAR home_address
+        DOUBLE home_latitude
+        DOUBLE home_longitude
+        JSON frequently_used_stations
+        VARCHAR walking_speed
+        INT preparation_time_minutes
+        VARCHAR priority_condition
+        TINYINT memo_usage_consent
+        TINYINT location_usage_consent
+        TINYINT calendar_usage_consent
+        TINYINT notification_enabled
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    plan {
+        INT id PK
+        INT user_id FK
+        VARCHAR input_text
+        DATETIME departure_time
+        DATETIME return_time
+        VARCHAR status
+        INT clarification_count
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    plan_item {
+        INT id PK
+        INT plan_id FK
+        INT sequence
+        VARCHAR item_type
+        DATETIME start_time
+        DATETIME end_time
+        VARCHAR location_name
+        DOUBLE location_latitude
+        DOUBLE location_longitude
+        VARCHAR transport_mode
+        JSON route_detail
+        VARCHAR station_exit
+        VARCHAR boarding_position
+        VARCHAR description
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    slot_evaluation {
+        INT id PK
+        INT plan_id FK
+        VARCHAR slot_type
+        VARCHAR slot_name
+        INT evaluation_order
+        TINYINT is_evaluated
+        VARCHAR evaluation_result
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    agent_session {
+        INT id PK
+        INT plan_id FK
+        VARCHAR session_type
+        VARCHAR input_summary
+        VARCHAR output_summary
+        VARCHAR judgment_result
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    routine {
+        INT id PK
+        INT user_id FK
+        VARCHAR routine_name
+        VARCHAR location_name
+        DATETIME start_time
+        DATETIME end_time
+        TINYINT is_skipped
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    memo {
+        INT id PK
+        INT user_id FK
+        VARCHAR memo_text
+        JSON checked_lines
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    calendar_integration {
+        INT id PK
+        INT user_id FK
+        VARCHAR provider
+        VARCHAR external_account_id
+        VARCHAR access_token_secret_arn
+        VARCHAR refresh_token_secret_arn
+        DATETIME token_expires_at
+        TINYINT is_active
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    calendar_event {
+        INT id PK
+        INT user_id FK
+        INT calendar_integration_id FK
+        VARCHAR external_event_id
+        VARCHAR event_title
+        DATETIME start_time
+        DATETIME end_time
+        VARCHAR location
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    departure_log {
+        INT id PK
+        INT user_id FK
+        INT plan_id FK
+        DATETIME planned_departure_time
+        DATETIME actual_departure_time
+        INT preparation_time_minutes
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+
+    point_program {
+        INT id PK
+        INT user_id FK
+        VARCHAR program_name
+        VARCHAR store_chain
+        TINYINT is_enabled
+        DATETIME created_at
+        DATETIME updated_at
+        INT created_by_user_id
+        INT updated_by_user_id
+        TINYINT is_deleted
+        DATETIME deleted_at
+    }
+```
+
+# インデックス定義レビュー結果
+
+## 1. 不足しているインデックス（外部キー対応）
+
+- 対象：calendar_event テーブル／`user_id`、`calendar_integration_id`
+  - 指摘内容：外部キー2件（`fk_calendar_event_user_id`、`fk_calendar_event_calendar_integration_id`）に対し、それぞれ単独インデックス（`idx_calendar_event_user_id`、`idx_calendar_event_calendar_integration_id`）が定義されており、外部キーに対応するインデックスは存在する。※不足なし（確認事項として記載）
+  - 根拠：「3.9 calendar_event テーブル」「4. 外部キー制約」
+
+- 対象：全テーブルの外部キー制約
+  - 指摘内容：「4. 外部キー制約」に列挙された外部キー（plan.user_id、plan_item.plan_id、slot_evaluation.plan_id、agent_session.plan_id、routine.user_id、memo.user_id、calendar_integration.user_id、calendar_event.user_id／calendar_integration_id、departure_log.user_id／plan_id、point_program.user_id）について、いずれも対応するインデックスが「3. インデックス定義」に定義されており、外部キーに対する不足は確認されない。
+  - 根拠：「3. インデックス定義」各節と「4. 外部キー制約」の対照
+
+## 2. 一意制約に関する確認
+
+- 対象：user テーブル／`cognito_user_id`、`email`
+  - 指摘内容：`cognito_user_id` は「外部サービス連携に必要な属性」、`email` は認証の主体に関わる属性だが、これらに対する UNIQUE インデックスが定義されていない。一方、カラム定義上はいずれも NOT NULL であり、一意性を担保するインデックスが存在しない。
+  - 根拠：「2.1 user テーブル」（cognito_user_id・email は NOT NULL）、「3.1 user テーブル」（PRIMARY のみ定義）
+  - ※ただし「一意であるべき」との明示的記述は入力内に無いため、一意制約要否は定義書上の情報からは断定不可。
+
+## 3. 複合インデックスのカラム順序
+
+- 対象：idx_memo_user_id_created_at（memo／`user_id, created_at`）
+  - 指摘内容：説明に「ユーザー別・作成日時での絞り込み／自動削除用」とあり、先頭カラムが `user_id`。memo は「作成から1週間で自動削除」される仕様があるが、自動削除は `created_at` 単独での範囲検索を要する可能性がある一方、本複合インデックスの先頭カラムは `user_id` である。カラム順序の明らかな不整合とまでは断定できないが、用途（自動削除）と先頭カラム（user_id）の整合性に留意が必要。
+  - 根拠：「2.7 memo テーブル」説明、「3.7 memo テーブル」
+
+## 4. 重複・冗長・過剰なインデックス
+
+- 指摘事項なし（同一カラム構成の重複、先頭カラムの包含関係による冗長、同一カラムへの重複定義は確認されない）
+  - 根拠：「3. インデックス定義」各節
+
+## 5. 命名規則の不統一
+
+- 対象：全インデックス名
+  - 指摘内容：
+    - 通常インデックスは `idx_{テーブル名}_{カラム名}` 形式で統一されている。
+    - UNIQUE インデックスは `uq_{テーブル名}_{カラム名}` 形式（`uq_calendar_integration_user_id_provider`）。
+    - PRIMARY は `PRIMARY` で統一。
+    いずれも接頭辞による種別区別が一貫しており、明らかな命名規則の不統一は確認されない。
+  - 根拠：「3. インデックス定義」各節
+
+---
+
+## 補足（確実な指摘のまとめ）
+
+入力情報のみを根拠として「明確に問題」と断定できる指摘は以下のとおりです。
+
+- user テーブルの `cognito_user_id`／`email`：NOT NULL かつ外部サービス連携・認証に関わる属性でありながら UNIQUE 制約・インデックスが未定義（ただし「一意であるべき」との明示記述は入力内に存在しないため、要否の最終判断は定義書からは不可）。
+
+上記以外の観点（重複・冗長・過剰インデックス、外部キー対応インデックスの不足、複合インデックスの明らかな順序不整合、命名規則の不統一）については、入力に明示された情報の範囲で明確な問題は確認されませんでした。

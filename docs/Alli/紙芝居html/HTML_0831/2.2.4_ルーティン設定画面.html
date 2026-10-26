@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>2.2.4 ルーティン設定画面</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="css/common.css" rel="stylesheet">
+</head>
+<body>
+  <div class="app-frame">
+    <header class="app-header">
+      <a href="2.2.2_ホーム入力画面.html" class="app-header__back" aria-label="戻る">←</a>
+      <h1 class="app-header__title">ルーティン</h1>
+    </header>
+
+    <main class="app-main">
+      <!-- ルーティン一覧 -->
+      <section id="routine-list-area">
+        <table class="table routine-list list-table-web" aria-label="ルーティン一覧">
+          <tbody>
+            <tr>
+              <td>
+                <div class="routine-list__item">
+                  <div><strong>毎週火曜 10:00 通院</strong></div>
+                  <div class="text-muted small">@〇〇クリニック</div>
+                  <div class="routine-list__actions">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-routine-edit>編集</button>
+                    <button type="button" class="btn btn-sm btn--danger" data-confirm-action data-confirm-target="delete-confirm-modal">削除</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary">スキップ</button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <div class="routine-list__item">
+                  <div><strong>毎週金曜 18:00 買い物</strong></div>
+                  <div class="text-muted small">@近所のスーパー</div>
+                  <div class="routine-list__actions">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-routine-edit>編集</button>
+                    <button type="button" class="btn btn-sm btn--danger" data-confirm-action data-confirm-target="delete-confirm-modal">削除</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary">スキップ</button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <button type="button" class="btn btn--primary btn--full mt-3" id="routine-new">新規登録</button>
+      </section>
+
+      <!-- 登録・編集フォーム -->
+      <section id="routine-form-area" class="hidden">
+        <div class="mb-3">
+          <label for="routine-name" class="form-label">ルーティン名<span class="required-mark">*</span></label>
+          <input type="text" class="form-control" id="routine-name" value="毎週火曜 10:00 通院">
+          <div class="error-message">ルーティン名を入力してください</div>
+        </div>
+        <div class="mb-3">
+          <label for="routine-place" class="form-label">場所</label>
+          <input type="text" class="form-control" id="routine-place" value="〇〇クリニック">
+        </div>
+        <div class="mb-3">
+          <label for="routine-start" class="form-label">開始時刻</label>
+          <input type="text" class="form-control" id="routine-start" value="10:00" placeholder="HH:mm">
+        </div>
+        <div class="mb-3">
+          <label for="routine-end" class="form-label">終了時刻</label>
+          <input type="text" class="form-control" id="routine-end" value="11:00" placeholder="HH:mm">
+        </div>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-outline-secondary flex-fill" id="routine-cancel">キャンセル</button>
+          <button type="button" class="btn btn--primary flex-fill" id="routine-save">保存</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer-actions">
+      <a href="2.2.2_ホーム入力画面.html" class="btn btn-outline-secondary btn--full">戻る</a>
+    </footer>
+  </div>
+
+  <!-- 2.2.10 削除確認ダイアログ -->
+  <div class="modal fade" id="delete-confirm-modal" tabindex="-1" aria-labelledby="delete-confirm-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-body text-center py-4">
+          <p id="delete-confirm-title" class="mb-4">本当に削除しますか？</p>
+          <div class="btn-group--confirm">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">いいえ</button>
+            <button type="button" class="btn btn--danger" data-confirm-yes="delete-routine">はい</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="js/common.js"></script>
+</body>
+</html>
