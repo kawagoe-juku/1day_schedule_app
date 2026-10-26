@@ -75,6 +75,8 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run api:check` | OpenAPI 定義のチェック（参照切れ・要件APIの網羅） |
 | `npm run db:up` / `db:down` | ローカルDBの起動・停止 |
 | `npm run db:psql` | ローカルDBに psql で接続 |
+| `npm run aws:check` | AWS の状態確認（変更しない。結果は `logs/aws-check.log`） |
+| `npm run infra:release` | インフラのテスト→差分表示→確認のうえ開発環境へデプロイ |
 | `npm run tools:setup` | AWS CLI・AWS CDK の導入と Docker の確認（初回のみ） |
 | `npm run app:setup` | Flutter（Web）環境のセットアップと `app/` の作成（初回のみ） |
 | `npm run app:dev` | Webアプリを Chrome で起動 |

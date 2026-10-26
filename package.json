@@ -22,12 +22,14 @@
     "db:psql": "docker compose exec db psql -U app -d schedule_app",
     "infra:diff": "cd infra && cdk diff --all --profile schedule-app-dev",
     "infra:deploy": "cd infra && cdk deploy --all --profile schedule-app-dev",
+    "infra:release": "bash scripts/infra-deploy.sh",
     "infra:ip": "aws ssm get-parameters-by-path --path /schedule-app/dev/network --recursive --query \"Parameters[?ends_with(Name, 'public-ip')].[Name,Value]\" --output table --profile schedule-app-dev",
     "app:setup": "bash scripts/setup-flutter-mac.sh",
     "app:dev": "cd app && flutter run -d chrome",
     "app:test": "cd app && flutter analyze && flutter test",
     "app:build": "cd app && flutter build web",
-    "tools:setup": "bash scripts/setup-tools-mac.sh"
+    "tools:setup": "bash scripts/setup-tools-mac.sh",
+    "aws:check": "bash scripts/aws-check.sh"
   },
   "devDependencies": {
     "prettier": "^3.4.2",
