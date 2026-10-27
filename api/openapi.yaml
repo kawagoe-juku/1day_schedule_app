@@ -24,6 +24,10 @@ info:
     - Web版のため `POST/DELETE /api/push-subscriptions` は定義しない。
     - 画面表示に必要なため次を追加：`GET /api/integrations`（連携状態の一覧）、
       `GET /api/integrations/{provider}/callback`（OAuthコールバック）、ヘルスチェック2本。
+    - ログイン失敗によるアカウントロック：要件は「なし」だが、Cognito 標準の連続失敗時の一時停止
+      （数秒〜数分で自動解除）は無効にできないため受け入れる（2026-10-27 決定）。
+    - 無操作1日でのセッション終了：Cognito のリフレッシュトークンの有効期間（ログインから1日）で代用する。
+      最後の操作からではなく、ログインから1日で再ログインが必要になる（2026-10-27 決定）。
 servers:
   - url: /
     description: 同一オリジン（CloudFront経由）

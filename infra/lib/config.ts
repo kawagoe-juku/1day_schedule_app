@@ -35,6 +35,11 @@ export interface StageConfig {
     readonly backupRetentionDays: number;
     readonly deletionProtection: boolean;
   };
+  /** 認証（2.4） */
+  readonly auth: {
+    /** 利用者プールの削除保護（true のときスタックを消しても利用者プールは残す） */
+    readonly deletionProtection: boolean;
+  };
   /** 監視・ログ（9.1） */
   readonly ops: {
     readonly logRetentionDays: number;
@@ -60,6 +65,7 @@ export const STAGES: Record<StageConfig['stage'], StageConfig> = {
       backupRetentionDays: 7,
       deletionProtection: false,
     },
+    auth: { deletionProtection: false },
     ops: { logRetentionDays: 30 },
   },
   stg: {
@@ -75,6 +81,7 @@ export const STAGES: Record<StageConfig['stage'], StageConfig> = {
       backupRetentionDays: 7,
       deletionProtection: true,
     },
+    auth: { deletionProtection: true },
     ops: { logRetentionDays: 90 },
   },
   prod: {
@@ -90,6 +97,7 @@ export const STAGES: Record<StageConfig['stage'], StageConfig> = {
       backupRetentionDays: 7,
       deletionProtection: true,
     },
+    auth: { deletionProtection: true },
     ops: { logRetentionDays: 90 },
   },
 };
