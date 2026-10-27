@@ -12,7 +12,7 @@ TypeScript の CDK アプリ。ルートの npm workspaces に含まれる。
 | `ScheduleApp-<stage>-CertCloudFront` | CloudFront 用の証明書（us-east-1、`<appDomain>` と `*.<appDomain>`） | 1.4 | dev 作成済み |
 | `ScheduleApp-<stage>-CertAlb` | ALB 用の証明書（東京、同上） | 1.4 | dev 作成済み |
 | `ScheduleApp-<stage>-Network` | VPC・サブネット・NAT Gateway（EgressIp の IP を使う）・セキュリティグループ | 2.2 | コード作成済み（2.10 でデプロイ） |
-| `ScheduleApp-<stage>-Data` | Aurora Serverless v2・Secrets Manager | 2.3 | 未作成 |
+| `ScheduleApp-<stage>-Data` | Aurora Serverless v2・Secrets Manager・ログ用 S3 | 2.3 | コード作成済み（2.10 でデプロイ） |
 | `ScheduleApp-<stage>-Auth` | Cognito User Pool・App Client | 2.4 | コード作成済み（2.10 でデプロイ） |
 | `ScheduleApp-<stage>-App` | ECR・ECS Fargate・ALB・バッチ（EventBridge Scheduler） | 2.5・7.2 | 未作成 |
 | `ScheduleApp-<stage>-Web` | S3＋CloudFront・WAF | 2.6・9.2 | 未作成 |

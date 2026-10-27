@@ -13,6 +13,7 @@ describe('環境設定', () => {
       `ScheduleApp-${stage}-CertAlb`,
       `ScheduleApp-${stage}-Network`,
       `ScheduleApp-${stage}-Auth`,
+      `ScheduleApp-${stage}-Data`,
     ]);
     expect(() => app.synth()).not.toThrow();
   });
