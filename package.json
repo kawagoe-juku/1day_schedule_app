@@ -21,7 +21,7 @@
     "db:down": "docker compose down",
     "db:psql": "docker compose exec db psql -U app -d schedule_app",
     "infra:diff": "cd infra && cdk diff --all --profile schedule-app-dev",
-    "infra:deploy": "cd infra && cdk deploy --all --profile schedule-app-dev",
+    "infra:deploy": "cd infra && cdk deploy ScheduleApp-dev-EgressIp ScheduleApp-dev-CertCloudFront ScheduleApp-dev-CertAlb --profile schedule-app-dev",
     "infra:release": "bash scripts/infra-deploy.sh",
     "infra:ip": "aws ssm get-parameters-by-path --path /schedule-app/dev/network --recursive --query \"Parameters[?ends_with(Name, 'public-ip')].[Name,Value]\" --output table --profile schedule-app-dev",
     "app:setup": "bash scripts/setup-flutter-mac.sh",

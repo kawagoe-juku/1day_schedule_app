@@ -11,6 +11,8 @@ describe('環境設定', () => {
       `ScheduleApp-${stage}-EgressIp`,
       `ScheduleApp-${stage}-CertCloudFront`,
       `ScheduleApp-${stage}-CertAlb`,
+      `ScheduleApp-${stage}-Network`,
+      `ScheduleApp-${stage}-Auth`,
     ]);
     expect(() => app.synth()).not.toThrow();
   });
