@@ -15,7 +15,7 @@ TypeScript の CDK アプリ。ルートの npm workspaces に含まれる。
 | `ScheduleApp-<stage>-Data` | Aurora Serverless v2・Secrets Manager・ログ用 S3 | 2.3 | コード作成済み（2.10 でデプロイ） |
 | `ScheduleApp-<stage>-Auth` | Cognito User Pool・App Client | 2.4 | コード作成済み（2.10 でデプロイ） |
 | `ScheduleApp-<stage>-App` | ECS Fargate（ARM64）・ALB（HTTPS のみ）・`origin.<appDomain>`。イメージは `server/Dockerfile`。バッチ（EventBridge Scheduler）は 7.2 | 2.5・7.2 | 2.5 分はコード作成済み（2.10 でデプロイ） |
-| `ScheduleApp-<stage>-Web` | S3＋CloudFront・WAF | 2.6・9.2 | 未作成 |
+| `ScheduleApp-<stage>-Web` | S3＋CloudFront・WAF | 2.6・9.2 | 2.6 分はコード作成済み（2.10 でデプロイ）。WAF は 9.2 |
 | `ScheduleApp-<stage>-Pipeline` | CodePipeline／CodeBuild | 2.7 | 未作成 |
 | `ScheduleApp-<stage>-Ops` | CloudWatch アラーム・ダッシュボード・Billing Alarm | 9.1 | 未作成 |
 
@@ -49,3 +49,10 @@ npm run infra:ip        # 出口 IP の表示（Google キーの IP 制限に登
 
 - `cdk bootstrap` 済み（ap-northeast-1・us-east-1、削除保護あり、権限の上限なし）。
 - 認証情報は `docs/setup/aws-account.md` のプロファイル `schedule-app-dev`。
+
+## 運用上の注意
+
+- **画面ファイル**：Web スタックは `app/build/web` がビルド済みのときだけ S3 に配置する。ないときは synth で警告が出るので、先に `flutter build web` を実行する（2.7 で自動デプロイに切り替える）。
+- **CloudFront → ALB のヘッダー**（`X-Origin-Verify`、シークレット `ai-schedule-app/<stage>/origin-verify`）：値はデプロイ時に CloudFront と ALB の両方へ読み込まれる。手で値を変えると両者が食い違い `/api` が 404 になるため、ローテーションはしない。変えるときは App と Web を続けてデプロイする。
+- **証明書の受け渡し**：CloudFront 用証明書（us-east-1）は `crossRegionReferences` で Web スタックに渡す。このため CertCloudFront に受け渡し用の Lambda が加わり、東京の SSM（`/cdk/exports/ScheduleApp-<stage>-Web/...`）に ARN が書かれる。Web が参照している間は証明書を作り直せない（作り直すときは先に Web の参照を外す）。削除は Web → CertCloudFront の順。
+- **dev の作り直し**：シークレットは削除後も最大30日は同じ名前で作れない。すぐ作り直すときは `aws secretsmanager delete-secret --secret-id <名前> --force-delete-without-recovery` で完全に削除する。

@@ -1,4 +1,5 @@
 import { App } from 'aws-cdk-lib';
+import { Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../lib/build-app.js';
 import { STAGES, getStageConfig } from '../lib/config.js';
@@ -6,7 +7,7 @@ import { STAGES, getStageConfig } from '../lib/config.js';
 describe('環境設定', () => {
   it.each(Object.keys(STAGES))('%s：環境名の指定だけで全スタックを組み立てられる', (stage) => {
     const app = new App({ context: { stage } });
-    const stacks = buildApp(app, stage, '123456789012');
+    const stacks = buildApp(app, stage, '123456789012', { webBuildDir: false });
     expect(stacks.map((s) => s.stackName)).toEqual([
       `ScheduleApp-${stage}-EgressIp`,
       `ScheduleApp-${stage}-CertCloudFront`,
@@ -15,8 +16,18 @@ describe('環境設定', () => {
       `ScheduleApp-${stage}-Auth`,
       `ScheduleApp-${stage}-Data`,
       `ScheduleApp-${stage}-App`,
+      `ScheduleApp-${stage}-Web`,
     ]);
     expect(() => app.synth()).not.toThrow();
+  });
+
+  it('ALB と CloudFront は App スタックの同じシークレットをヘッダーの値に使う', () => {
+    const app = new App({ context: { stage: 'dev' } });
+    const stacks = buildApp(app, 'dev', '123456789012', { webBuildDir: false });
+    const json = (name: string) =>
+      JSON.stringify(Template.fromStack(stacks.find((s) => s.stackName.endsWith(name))!).toJSON());
+    const secretId = /"Ref":"(OriginVerifySecret[0-9A-F]+)"/.exec(json('-App'))![1]!;
+    expect(json('-Web')).toContain(`ExportsOutputRef${secretId}`);
   });
 
   it('未知の環境名はエラーにする', () => {

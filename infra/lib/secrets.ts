@@ -19,3 +19,7 @@ export function externalSecretName(stage: string, secret: ExternalSecret): strin
 
 /** DB の認証情報（Data スタックが自動生成する） */
 export const dbSecretName = (stage: string): string => `ai-schedule-app/${stage}/db`;
+
+/** CloudFront から ALB への要求に付けるヘッダーの値（App スタックが自動生成する） */
+export const originVerifySecretName = (stage: string): string =>
+  `ai-schedule-app/${stage}/origin-verify`;

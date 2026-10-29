@@ -188,14 +188,29 @@ describe('AppStack', () => {
     expect(attrs['routing.http.drop_invalid_header_fields.enabled']).toBe('true');
   });
 
-  it('/api/* と /agent/* をサーバへ振り分け、ヘルスチェックは /api/health', () => {
+  it('/api/* と /agent/* を、CloudFront のヘッダーがあるときだけサーバへ振り分ける', () => {
     const { t } = synth('dev');
     t.hasResourceProperties('AWS::ElasticLoadBalancingV2::ListenerRule', {
       Priority: 10,
       Conditions: [
         { Field: 'path-pattern', PathPatternConfig: { Values: ['/api/*', '/agent/*'] } },
+        {
+          Field: 'http-header',
+          HttpHeaderConfig: { HttpHeaderName: 'X-Origin-Verify', Values: [Match.anyValue()] },
+        },
       ],
     });
+    // ヘッダーの値はテンプレートに書かず、デプロイ時に Secrets Manager から読む
+    const rule = JSON.stringify(t.findResources('AWS::ElasticLoadBalancingV2::ListenerRule'));
+    expect(rule).toContain('{{resolve:secretsmanager:');
+    t.hasResourceProperties('AWS::SecretsManager::Secret', {
+      Name: 'ai-schedule-app/dev/origin-verify',
+      GenerateSecretString: Match.objectLike({ PasswordLength: 32, ExcludePunctuation: true }),
+    });
+  });
+
+  it('ヘルスチェックは /api/health', () => {
+    const { t } = synth('dev');
     t.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', {
       Port: 3000,
       Protocol: 'HTTP',
