@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
 /** DB接続確認用の最小限のクライアント。DBアクセス層は WBS 3.1 で実装する。 */
@@ -6,11 +7,21 @@ export interface DbChecker {
   close(): Promise<void>;
 }
 
-export function createDbChecker(databaseUrl: string): DbChecker {
+export interface DbOptions {
+  /** TLS 接続で検証する CA 証明書のファイル。指定時は TLS 必須で証明書を検証する */
+  sslCaPath?: string;
+}
+
+export function createDbChecker(databaseUrl: string, options: DbOptions = {}): DbChecker {
   const pool = new pg.Pool({
     connectionString: databaseUrl,
     max: 2,
     connectionTimeoutMillis: 2000,
+    // 使っていない接続は10秒で閉じる（開発環境の Aurora を自動停止させるため、接続を残さない）
+    idleTimeoutMillis: 10_000,
+    ssl: options.sslCaPath
+      ? { ca: readFileSync(options.sslCaPath, 'utf8'), rejectUnauthorized: true }
+      : undefined,
   });
   return {
     async ping() {

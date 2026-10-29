@@ -1,0 +1,12 @@
+# server/Dockerfile のビルドに使うファイルだけを渡す（それ以外はすべて除外する）
+*
+!package.json
+!package-lock.json
+!server/package.json
+!server/tsconfig.json
+!server/tsconfig.build.json
+!server/src
+!infra/package.json
+**/node_modules
+**/.env
+**/.env.*

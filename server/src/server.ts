@@ -10,7 +10,9 @@ try {
 }
 
 const config = loadConfig();
-const db = config.DATABASE_URL ? createDbChecker(config.DATABASE_URL) : undefined;
+const db = config.DATABASE_URL
+  ? createDbChecker(config.DATABASE_URL, { sslCaPath: config.DB_SSL_CA_PATH })
+  : undefined;
 const app = await buildApp({ config, db });
 
 const shutdown = async (signal: string) => {

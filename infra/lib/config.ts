@@ -20,6 +20,8 @@ export interface StageConfig {
   };
   /** ECS Fargate（2.5） */
   readonly app: {
+    /** 計画生成に使う Bedrock のモデル（推論プロファイル）。選定は 5.10 で見直す */
+    readonly bedrockModelId: string;
     readonly cpu: number;
     readonly memoryMiB: number;
     readonly minTasks: number;
@@ -48,6 +50,9 @@ export interface StageConfig {
 
 export const PROJECT = 'schedule-app';
 
+/** 当面の Bedrock モデル（国内処理の推論プロファイル。2026-10-26 決定） */
+export const BEDROCK_MODEL_ID = 'jp.anthropic.claude-sonnet-4-6';
+
 /** Route 53 で取得したドメイン（ホストゾーン名） */
 export const ROOT_DOMAIN = 'super-ai-schedule-app.com';
 
@@ -57,7 +62,7 @@ export const STAGES: Record<StageConfig['stage'], StageConfig> = {
     region: 'ap-northeast-1',
     appDomain: `dev.${ROOT_DOMAIN}`,
     network: { vpcCidr: '10.100.0.0/16', azCount: 2, natGateways: 1 },
-    app: { cpu: 256, memoryMiB: 512, minTasks: 1, maxTasks: 2 },
+    app: { bedrockModelId: BEDROCK_MODEL_ID, cpu: 256, memoryMiB: 512, minTasks: 1, maxTasks: 2 },
     database: {
       minAcu: 0,
       maxAcu: 2,
@@ -73,7 +78,7 @@ export const STAGES: Record<StageConfig['stage'], StageConfig> = {
     region: 'ap-northeast-1',
     appDomain: `stg.${ROOT_DOMAIN}`,
     network: { vpcCidr: '10.101.0.0/16', azCount: 2, natGateways: 1 },
-    app: { cpu: 256, memoryMiB: 512, minTasks: 1, maxTasks: 2 },
+    app: { bedrockModelId: BEDROCK_MODEL_ID, cpu: 256, memoryMiB: 512, minTasks: 1, maxTasks: 2 },
     database: {
       minAcu: 0.5,
       maxAcu: 2,
@@ -89,7 +94,7 @@ export const STAGES: Record<StageConfig['stage'], StageConfig> = {
     region: 'ap-northeast-1',
     appDomain: ROOT_DOMAIN,
     network: { vpcCidr: '10.102.0.0/16', azCount: 2, natGateways: 2 },
-    app: { cpu: 256, memoryMiB: 512, minTasks: 2, maxTasks: 4 },
+    app: { bedrockModelId: BEDROCK_MODEL_ID, cpu: 256, memoryMiB: 512, minTasks: 2, maxTasks: 4 },
     database: {
       minAcu: 0.5,
       maxAcu: 4,

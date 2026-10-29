@@ -14,6 +14,7 @@ describe('環境設定', () => {
       `ScheduleApp-${stage}-Network`,
       `ScheduleApp-${stage}-Auth`,
       `ScheduleApp-${stage}-Data`,
+      `ScheduleApp-${stage}-App`,
     ]);
     expect(() => app.synth()).not.toThrow();
   });

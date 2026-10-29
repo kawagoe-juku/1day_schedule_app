@@ -1,7 +1,8 @@
 import { Tags, type App, type Stack } from 'aws-cdk-lib';
+import { AppStack } from './app-stack.js';
 import { AuthStack } from './auth-stack.js';
 import { CertificateStack } from './certificate-stack.js';
-import { DataStack } from './data-stack.js';
+import { DATABASE_NAME, DataStack } from './data-stack.js';
 import { PROJECT, getStageConfig } from './config.js';
 import { EgressIpStack } from './egress-ip-stack.js';
 import { NetworkStack } from './network-stack.js';
@@ -17,7 +18,7 @@ import { NetworkStack } from './network-stack.js';
  * | Network         | VPC・サブネット・NAT・SG                           | 2.2 コード済（2.10 でデプロイ） |
  * | Data            | Aurora Serverless v2・Secrets Manager・ログ用 S3   | 2.3 コード済（2.10 でデプロイ） |
  * | Auth            | Cognito User Pool・App Client                      | 2.4 コード済（2.10 でデプロイ） |
- * | App             | ECR・ECS Fargate・ALB・バッチ（EventBridge）        | 2.5・7.2 |
+ * | App             | ECS Fargate（イメージは CDK アセット）・ALB・バッチ（EventBridge） | 2.5 コード済（2.10 でデプロイ）・7.2 |
  * | Web             | S3＋CloudFront・WAF                                | 2.6・9.2 |
  * | Pipeline        | CodePipeline／CodeBuild                            | 2.7 |
  * | Ops             | CloudWatch アラーム・ダッシュボード・Billing Alarm | 9.1 |
@@ -71,7 +72,24 @@ export function buildApp(
     description: `${PROJECT} ${config.stage}: Aurora Serverless v2・Secrets Manager・ログ用 S3`,
   });
 
-  const stacks: Stack[] = [egressIp, certCloudFront, certAlb, network, auth, data];
+  const appStack = new AppStack(app, `${prefix}-App`, {
+    env,
+    config,
+    vpc: network.vpc,
+    albSecurityGroup: network.albSecurityGroup,
+    appSecurityGroup: network.appSecurityGroup,
+    certificate: certAlb.certificate,
+    dbSecret: data.dbSecret,
+    databaseName: DATABASE_NAME,
+    databasePort: data.cluster.clusterEndpoint.port.toString(),
+    externalSecrets: data.externalSecrets,
+    userPool: auth.userPool,
+    webClient: auth.webClient,
+    logsBucket: data.logsBucket,
+    description: `${PROJECT} ${config.stage}: ECS Fargate（/api・/agent）・ALB`,
+  });
+
+  const stacks: Stack[] = [egressIp, certCloudFront, certAlb, network, auth, data, appStack];
 
   Tags.of(app).add('Project', PROJECT);
   Tags.of(app).add('Env', config.stage);
