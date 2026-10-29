@@ -52,4 +52,4 @@ else:
   run "1.4 Route 53 ドメイン" aws route53 list-hosted-zones --profile "$PROFILE" --query "HostedZones[].Name" --output text
 } >"$LOG" 2>&1
 
-echo "完了しました。結果は $LOG に保存しました（Claude が読み取ります）。"
+echo "完了しました。結果は $LOG に保存しました。"

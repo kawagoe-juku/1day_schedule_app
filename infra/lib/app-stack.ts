@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, Stack, type StackProps } from 'aws-cdk-lib';
 import type { ICertificate } from 'aws-cdk-lib/aws-certificatemanager';
 import type { IUserPool, IUserPoolClient } from 'aws-cdk-lib/aws-cognito';
 import { SecurityGroup, SubnetType, type ISecurityGroup, type IVpc } from 'aws-cdk-lib/aws-ec2';
@@ -25,26 +25,23 @@ import {
 } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { LogGroup } from 'aws-cdk-lib/aws-logs';
-import { ARecord, HostedZone, RecordTarget, type IHostedZone } from 'aws-cdk-lib/aws-route53';
+import { ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { LoadBalancerTarget } from 'aws-cdk-lib/aws-route53-targets';
 import type { IBucket } from 'aws-cdk-lib/aws-s3';
 import { Secret, type ISecret } from 'aws-cdk-lib/aws-secretsmanager';
 import type { Construct } from 'constructs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { PROJECT, ROOT_DOMAIN, type StageConfig } from './config.js';
-import { toRetentionDays } from './data-stack.js';
+import { API_PATHS, REPO_ROOT, lookupZone, removalPolicyOf, toRetentionDays } from './common.js';
+import { BEDROCK_MODEL_ID, PROJECT, type StageConfig } from './config.js';
+import { DATABASE_NAME } from './data-stack.js';
 import { APP_PORT } from './network-stack.js';
 import { EXTERNAL_SECRETS, originVerifySecretName, type ExternalSecret } from './secrets.js';
 
 /** ALB のヘルスチェック先（DB に触れないエンドポイント） */
-export const HEALTH_CHECK_PATH = '/api/health';
+const HEALTH_CHECK_PATH = '/api/health';
 /** CloudFront から ALB へ接続するときのドメイン名（ALB 用証明書の *.<appDomain> に含まれる） */
 export const originDomain = (appDomain: string): string => `origin.${appDomain}`;
 /** CloudFront だけが ALB への要求に付けるヘッダー（値は Secrets Manager で自動生成） */
 export const ORIGIN_VERIFY_HEADER = 'X-Origin-Verify';
-
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 export interface AppStackProps extends StackProps {
   readonly config: StageConfig;
@@ -53,10 +50,6 @@ export interface AppStackProps extends StackProps {
   readonly appSecurityGroup: ISecurityGroup;
   readonly certificate: ICertificate;
   readonly dbSecret: ISecret;
-  /** DB 名（Data スタックの DATABASE_NAME） */
-  readonly databaseName: string;
-  /** DB のポート（クラスタのエンドポイントから） */
-  readonly databasePort: string;
   readonly externalSecrets: Record<ExternalSecret, ISecret>;
   readonly userPool: IUserPool;
   readonly webClient: IUserPoolClient;
@@ -68,25 +61,24 @@ export interface AppStackProps extends StackProps {
 }
 
 /**
- * WBS 2.5：ECR（CDK アセット）・ECS Fargate・ALB（要件定義書 4.1.1・4.2.1）。
+ * ECR（CDK アセット）・ECS Fargate・ALB（要件定義書 4.1.1・4.2.1）。
  *
  * - サーバは単一のコンテナで /api/* と /agent/* を受ける。ALB は HTTPS 443 のみ・CloudFront 経由のみ。
  * - CloudFront 経由の確認は2段階：SG で CloudFront の IP 範囲に限定し、さらに Web スタックの CloudFront だけが付けるヘッダーを転送の条件にする。
  * - SG は Network のものを変更不可として読み込み、CDK が自動でルールを足さないようにする（重複・全開放の防止）。
- * - 初回（2.10）は Mac の Docker で server/Dockerfile をビルドして ECR に置く。2.7 で自動デプロイに切り替える。
+ * - イメージは CDK が server/Dockerfile からビルドして ECR に置く。
  * - DB の接続情報と外部 API キーは Secrets Manager から環境変数として注入する（イメージや設定に値を含めない）。
- * - タスクの権限は Bedrock（Claude）の呼び出しと、ECS Exec 用（ssmmessages・logs）のみ。
+ * - タスクの権限は Bedrock（Claude）の呼び出しと、ECS Exec 用の通信（ssmmessages。dev・stg のみ）だけ。
  */
 export class AppStack extends Stack {
   readonly loadBalancer: ApplicationLoadBalancer;
-  readonly originDomainName: string;
   readonly service: FargateService;
   /** CloudFront → ALB のヘッダーの値（Web スタックが使う） */
   readonly originVerifySecret: Secret;
 
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
-    const { stage, app, ops, appDomain, database } = props.config;
+    const { stage, app, ops, appDomain, retainOnDelete } = props.config;
     const name = `${PROJECT}-${stage}`;
 
     // Network で定義済みのルールだけを使う（mutable: false で CDK による追加を防ぐ）
@@ -123,7 +115,7 @@ export class AppStack extends Stack {
       logGroupName: `/${PROJECT}/${stage}/server`,
       retention: toRetentionDays(ops.logRetentionDays),
       // dev は作り直しやすいよう削除する（初回作成の失敗でロググループだけが残るのを防ぐ）
-      removalPolicy: database.deletionProtection ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+      removalPolicy: removalPolicyOf(retainOnDelete),
     });
 
     const image =
@@ -149,10 +141,9 @@ export class AppStack extends Stack {
         APP_STAGE: stage,
         COGNITO_USER_POOL_ID: props.userPool.userPoolId,
         COGNITO_WEB_CLIENT_ID: props.webClient.userPoolClientId,
-        BEDROCK_MODEL_ID: app.bedrockModelId,
-        // DB 名とポートは秘密ではないので通常の環境変数で渡す（ホスト・ユーザー・パスワードはシークレットから）
-        DB_NAME: props.databaseName,
-        DB_PORT: props.databasePort,
+        BEDROCK_MODEL_ID,
+        // DB 名は秘密ではないので通常の環境変数で渡す（ホスト・ユーザー・パスワードはシークレットから。ポートは既定の 5432）
+        DB_NAME: DATABASE_NAME,
       },
       secrets: {
         DB_HOST: EcsSecret.fromSecretsManager(props.dbSecret, 'host'),
@@ -163,7 +154,7 @@ export class AppStack extends Stack {
       },
     });
 
-    // Bedrock：国内処理（jp.）の推論プロファイル経由で Claude だけを呼べる（2026-10-26 決定）。
+    // Bedrock：国内処理（jp.）の推論プロファイル経由で Claude だけを呼べる。
     // jp. の推論プロファイルは東京・大阪のどちらかで処理するため、モデルは両リージョンを許可する。
     taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
@@ -187,7 +178,7 @@ export class AppStack extends Stack {
       securityGroups: [appSg],
       assignPublicIp: false,
       circuitBreaker: { rollback: true }, // 起動に失敗した版は自動で元に戻す
-      enableExecuteCommand: true, // 調査用（使うときは CLI 用ユーザーに権限を追加する）
+      enableExecuteCommand: app.ecsExec, // 調査用（使うときは CLI 用ユーザーに権限を追加する）
       healthCheckGracePeriod: Duration.seconds(30),
     });
     this.service
@@ -202,7 +193,7 @@ export class AppStack extends Stack {
       securityGroup: albSg,
       idleTimeout: Duration.seconds(60), // 計画生成のサーバ打ち切り（13秒）より長くする
       dropInvalidHeaderFields: true,
-      deletionProtection: database.deletionProtection,
+      deletionProtection: retainOnDelete,
     });
     this.loadBalancer.logAccessLogs(props.logsBucket, 'alb');
 
@@ -246,7 +237,7 @@ export class AppStack extends Stack {
     listener.addAction('ApiAndAgent', {
       priority: 10,
       conditions: [
-        ListenerCondition.pathPatterns(['/api/*', '/agent/*']),
+        ListenerCondition.pathPatterns([...API_PATHS]),
         ListenerCondition.httpHeader(ORIGIN_VERIFY_HEADER, [
           this.originVerifySecret.secretValue.unsafeUnwrap(), // デプロイ時に読み込む（テンプレートに値を書かない）
         ]),
@@ -254,19 +245,13 @@ export class AppStack extends Stack {
       action: ListenerAction.forward([targetGroup]),
     });
 
-    const zone: IHostedZone = props.hostedZoneId
-      ? HostedZone.fromHostedZoneAttributes(this, 'Zone', {
-          hostedZoneId: props.hostedZoneId,
-          zoneName: ROOT_DOMAIN,
-        })
-      : HostedZone.fromLookup(this, 'Zone', { domainName: ROOT_DOMAIN });
-    this.originDomainName = originDomain(appDomain);
+    const originDomainName = originDomain(appDomain);
     new ARecord(this, 'OriginRecord', {
-      zone,
-      recordName: this.originDomainName,
+      zone: lookupZone(this, props.hostedZoneId),
+      recordName: originDomainName,
       target: RecordTarget.fromAlias(new LoadBalancerTarget(this.loadBalancer)),
     });
 
-    new CfnOutput(this, 'OriginDomain', { value: this.originDomainName });
+    new CfnOutput(this, 'OriginDomain', { value: originDomainName });
   }
 }

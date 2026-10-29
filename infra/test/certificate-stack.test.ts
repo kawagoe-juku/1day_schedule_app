@@ -31,10 +31,4 @@ describe('CertificateStack', () => {
       DomainName: 'super-ai-schedule-app.com',
     });
   });
-
-  it('証明書 ARN を用途別の SSM パラメータに保存する', () => {
-    synth('dev', 'alb').hasResourceProperties('AWS::SSM::Parameter', {
-      Name: '/schedule-app/dev/certificate/alb/arn',
-    });
-  });
 });

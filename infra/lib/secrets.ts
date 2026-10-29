@@ -1,8 +1,8 @@
 /**
  * 外部 API キーのシークレット（Secrets Manager）。値はコードに書かず、名前とキー名だけを持つ。
  *
- * - dev は 1.1 で登録済みの名前をそのまま使う。
- * - stg・prod は 9.6・9.7 で `ai-schedule-app/<stage>/<名前>` として別に登録する（2026-10-27 決定 P4）。
+ * - dev は登録済みの名前（環境名なし）をそのまま使う。
+ * - stg・prod は `ai-schedule-app/<stage>/<名前>` として別に登録する。
  */
 export const EXTERNAL_SECRETS = {
   googleMapsServer: { name: 'google-maps-api-key', key: 'I_SCHEDULE_APP_FOR_SERVER' },

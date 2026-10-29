@@ -6,7 +6,7 @@ import { STAGES, getStageConfig } from '../lib/config.js';
 
 describe('環境設定', () => {
   it.each(Object.keys(STAGES))('%s：環境名の指定だけで全スタックを組み立てられる', (stage) => {
-    const app = new App({ context: { stage } });
+    const app = new App();
     const stacks = buildApp(app, stage, '123456789012', { webBuildDir: false });
     expect(stacks.map((s) => s.stackName)).toEqual([
       `ScheduleApp-${stage}-EgressIp`,
@@ -22,12 +22,12 @@ describe('環境設定', () => {
   });
 
   it('ALB と CloudFront は App スタックの同じシークレットをヘッダーの値に使う', () => {
-    const app = new App({ context: { stage: 'dev' } });
+    const app = new App();
     const stacks = buildApp(app, 'dev', '123456789012', { webBuildDir: false });
     const json = (name: string) =>
       JSON.stringify(Template.fromStack(stacks.find((s) => s.stackName.endsWith(name))!).toJSON());
     const secretId = /"Ref":"(OriginVerifySecret[0-9A-F]+)"/.exec(json('-App'))![1]!;
-    expect(json('-Web')).toContain(`ExportsOutputRef${secretId}`);
+    expect(json('-Web')).toContain(`OutputRef${secretId}`);
   });
 
   it('未知の環境名はエラーにする', () => {
@@ -51,7 +51,8 @@ describe('環境設定', () => {
     const p = STAGES.prod;
     expect(p.network.natGateways).toBe(2);
     expect(p.database.readers).toBeGreaterThanOrEqual(1);
-    expect(p.database.deletionProtection).toBe(true);
+    expect(p.retainOnDelete).toBe(true);
+    expect(p.app.ecsExec).toBe(false);
     expect(p.app.minTasks).toBeGreaterThanOrEqual(2);
     expect(p.ops.logRetentionDays).toBe(90);
   });

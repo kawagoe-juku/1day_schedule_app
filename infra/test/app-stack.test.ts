@@ -40,8 +40,6 @@ const synth = (stage: keyof typeof STAGES) => {
     appSecurityGroup: network.appSecurityGroup,
     certificate: cert.certificate,
     dbSecret: data.dbSecret,
-    databaseName: 'schedule_app',
-    databasePort: data.cluster.clusterEndpoint.port.toString(),
     externalSecrets: data.externalSecrets,
     userPool: auth.userPool,
     webClient: auth.webClient,
@@ -50,7 +48,7 @@ const synth = (stage: keyof typeof STAGES) => {
     hostedZoneId: 'Z0000000000000000000',
     env,
   });
-  return { t: Template.fromStack(stack), data: Template.fromStack(data) };
+  return { t: Template.fromStack(stack) };
 };
 
 describe('AppStack', () => {
@@ -97,7 +95,7 @@ describe('AppStack', () => {
     expect(envNames.some((n) => /PASSWORD|KEY$/.test(n))).toBe(false);
   });
 
-  it('タスクロールは Bedrock（jp. の Claude）と ECS Exec 用（通信・セッションログ）だけ', () => {
+  it('タスクロールは Bedrock（jp. の Claude）と ECS Exec 用の通信だけ', () => {
     const { t } = synth('dev');
     const taskDef = Object.values(t.findResources('AWS::ECS::TaskDefinition'))[0] as {
       Properties: { TaskRoleArn: { 'Fn::GetAtt': [string, string] } };
@@ -113,8 +111,8 @@ describe('AppStack', () => {
       .filter((p) => p.Properties.Roles.some((r) => r.Ref === taskRoleId))
       .flatMap((p) => p.Properties.PolicyDocument.Statement);
     const actions = statements.flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action]));
-    // ECS Exec を有効にすると、CDK が通信（ssmmessages）とセッションログ（logs）の権限を付ける
-    expect(actions.every((a) => /^(bedrock|ssmmessages|logs):/.test(a))).toBe(true);
+    // ECS Exec を有効にすると、CDK が通信（ssmmessages）の権限を付ける
+    expect(actions.every((a) => /^(bedrock|ssmmessages):/.test(a))).toBe(true);
     const bedrock = statements.find((s) => JSON.stringify(s.Action).includes('bedrock'))!;
     expect(bedrock.Action).toEqual([
       'bedrock:InvokeModel',
@@ -127,10 +125,19 @@ describe('AppStack', () => {
     expect(resources).not.toMatch(/bedrock:\*:|inference-profile\/\*"/); // 全リージョン・全プロファイルを許可していない
   });
 
-  it('実行ロールは注入するシークレットを読める', () => {
+  it('実行ロールは注入するシークレット（DB・外部 API キー2つ）だけを読める', () => {
     const { t } = synth('dev');
-    const json = JSON.stringify(t.findResources('AWS::IAM::Policy'));
-    expect(json).toContain('secretsmanager:GetSecretValue');
+    const statements = (
+      Object.values(t.findResources('AWS::IAM::Policy')) as {
+        Properties: { PolicyDocument: { Statement: { Action: unknown; Resource: unknown }[] } };
+      }[]
+    ).flatMap((p) => p.Properties.PolicyDocument.Statement);
+    const read = statements.filter((s) =>
+      JSON.stringify(s.Action).includes('secretsmanager:GetSecretValue'),
+    );
+    const resources = read.flatMap((s) => (Array.isArray(s.Resource) ? s.Resource : [s.Resource]));
+    expect(resources).toHaveLength(3);
+    expect(JSON.stringify(resources)).not.toContain('"*"');
   });
 
   it('dev のサーバのロググループは30日保持で、作り直せるよう削除可能', () => {
@@ -232,6 +239,10 @@ describe('AppStack', () => {
       Name: 'origin.dev.super-ai-schedule-app.com.',
       Type: 'A',
     });
+  });
+
+  it('本番は ECS Exec を無効にする', () => {
+    synth('prod').t.hasResourceProperties('AWS::ECS::Service', { EnableExecuteCommand: false });
   });
 
   it('本番の ALB は削除保護あり', () => {

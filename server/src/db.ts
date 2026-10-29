@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-/** DB接続確認用の最小限のクライアント。DBアクセス層は WBS 3.1 で実装する。 */
+/** DB 接続確認用の最小限のクライアント（ヘルスチェック用） */
 export interface DbChecker {
   ping(): Promise<boolean>;
   close(): Promise<void>;
@@ -10,6 +10,8 @@ export interface DbChecker {
 export interface DbOptions {
   /** TLS 接続で検証する CA 証明書のファイル。指定時は TLS 必須で証明書を検証する */
   sslCaPath?: string;
+  /** 接続確認に失敗したときの原因（TLS・認証・タイムアウトなど）を受け取る。ログ出力用 */
+  onError?: (error: unknown) => void;
 }
 
 export function createDbChecker(databaseUrl: string, options: DbOptions = {}): DbChecker {
@@ -28,7 +30,8 @@ export function createDbChecker(databaseUrl: string, options: DbOptions = {}): D
       try {
         await pool.query('SELECT 1');
         return true;
-      } catch {
+      } catch (error) {
+        options.onError?.(error);
         return false;
       }
     },

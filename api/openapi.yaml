@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AIスケジュール外出支援サービス API
-  version: 0.2.0
+  version: 0.2.1
   description: |
     Webアプリ（Flutter Web）向けのREST API。単一のサーバで `/api/*`（APIサービス）と
     `/agent/*`（AI連携基盤）を提供する。
@@ -14,7 +14,7 @@ info:
     - 列挙値：APIでは英字コードを使う。DBの日本語値との対応は各スキーマの説明に記載。
     - 「準備のみ」機能（音声入力・延期再計画・出発検知）は Feature Flag OFF の間 `501 FEATURE_DISABLED` を返す。
 
-    ## 決定事項（2026-10-15 前田さんレビュー）
+    ## 決定事項
     - 列挙値は英字コードでやり取りし、画面表示はアプリ側で日本語に変換する。
     - オンボーディング完了は `PUT /api/profile` の `completeOnboarding: true` で保存する（専用APIは設けない）。
     - メモ本文の上限は255文字（DB定義書どおり）。
@@ -25,9 +25,9 @@ info:
     - 画面表示に必要なため次を追加：`GET /api/integrations`（連携状態の一覧）、
       `GET /api/integrations/{provider}/callback`（OAuthコールバック）、ヘルスチェック2本。
     - ログイン失敗によるアカウントロック：要件は「なし」だが、Cognito 標準の連続失敗時の一時停止
-      （数秒〜数分で自動解除）は無効にできないため受け入れる（2026-10-27 決定）。
+      （数秒〜数分で自動解除）は無効にできないため受け入れる。
     - 無操作1日でのセッション終了：Cognito のリフレッシュトークンの有効期間（ログインから1日）で代用する。
-      最後の操作からではなく、ログインから1日で再ログインが必要になる（2026-10-27 決定）。
+      最後の操作からではなく、ログインから1日で再ログインが必要になる。
 servers:
   - url: /
     description: 同一オリジン（CloudFront経由）
@@ -960,6 +960,7 @@ components:
           properties:
             code:
               type: string
+              description: FORBIDDEN は予約（他の利用者のデータを指定した場合は 404 NOT_FOUND を返す）
               enum:
                 - VALIDATION_ERROR
                 - UNAUTHORIZED
@@ -1090,7 +1091,19 @@ components:
           $ref: '#/components/schemas/DateTime'
     Plan:
       type: object
-      required: [id, status, inputText, targetDate, items, assumptions, quota, createdAt, updatedAt]
+      required:
+        [
+          id,
+          status,
+          inputText,
+          targetDate,
+          items,
+          assumptions,
+          warnings,
+          quota,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         id:
           $ref: '#/components/schemas/Id'

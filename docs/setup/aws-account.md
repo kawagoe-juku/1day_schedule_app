@@ -1,11 +1,11 @@
-# AWS アカウントの準備（WBS 1.3）
+# AWS アカウントの準備
 
 方針：**人がコンソールで使うユーザー**と、**Mac の CLI・CDK が使うユーザー**を分ける。
 長期間有効なアクセスキーは、権限を絞った CLI 用ユーザーだけに持たせる。
 
 | ユーザー | 用途 | 権限 | 認証 |
 | --- | --- | --- | --- |
-| 前田さんの IAM ユーザー（既存） | コンソール操作・初期準備 | AdministratorAccess（現状のまま） | パスワード＋**MFA** |
+| 管理者の IAM ユーザー（既存） | コンソール操作・初期準備 | AdministratorAccess（現状のまま） | パスワード＋**MFA** |
 | `schedule-app-cli`（新規） | Mac からの CDK デプロイ・Bedrock 呼び出し | `infra/iam/schedule-app-cli-policy.json` のみ | アクセスキー |
 
 ## 手順
@@ -14,17 +14,19 @@
 
 管理者ユーザーで実行する（CLI 用ユーザーに切り替えた後は、コンソールの CloudShell で実行する）。東京（ap-northeast-1）と、CloudFront の証明書用に us-east-1 の2リージョンで行う。
 
-> 権限の上限（`--example-permissions-boundary`）は付けない（10/26 決定）。CLI 用ユーザーの権限を絞っていること、開発環境のみであることが理由。本番環境の権限を絞る作業（WBS 9.7 の前）で再検討する。
+> 権限の上限（`--example-permissions-boundary`）は付けない。CLI 用ユーザーの権限を絞っていること、開発環境のみであることが理由。本番環境を作る前に再検討する。
 
 ```bash
 aws sts get-caller-identity --profile schedule-app-dev   # Account の12桁を控える
 
-cdk bootstrap aws://<アカウントID>/ap-northeast-1 \
-  --termination-protection \
-  --tags Project=schedule-app --tags Env=dev
+for region in ap-northeast-1 us-east-1; do
+  cdk bootstrap aws://<アカウントID>/$region \
+    --termination-protection \
+    --tags Project=schedule-app --tags Env=dev
+done
 ```
 
-`Environment aws://.../ap-northeast-1 bootstrapped.` と出れば完了。
+2つのリージョンで `Environment aws://.../<リージョン> bootstrapped.` と出れば完了。
 
 | オプション | 効果 |
 | --- | --- |
@@ -46,22 +48,22 @@ aws sts get-caller-identity --profile schedule-app-dev
 # Arn が .../user/schedule-app-cli になっていれば OK
 ```
 
-### 4. 前田さんのユーザーの後片付け
+### 4. 管理者ユーザーの後片付け
 
-1. 手順1で使った**前田さんのユーザーのアクセスキーを「無効化」→「削除」**する（以後 CLI では使わない）。
-2. 前田さんのユーザーに **MFA** を設定する（「セキュリティ認証情報」→「MFA デバイスの割り当て」→ スマホの認証アプリ）。
+1. 手順1で使った**管理者ユーザーのアクセスキーを「無効化」→「削除」**する（以後 CLI では使わない）。
+2. 管理者ユーザーに **MFA** を設定する（「セキュリティ認証情報」→「MFA デバイスの割り当て」→ スマホの認証アプリ）。
 
 ## このポリシーで許可していること
 
 | 許可 | 理由 |
 | --- | --- |
 | `cdk-hnb659fds-*` ロールへの切り替え | `cdk deploy` / `cdk diff` は CDK のロールに切り替えて作業するため、これだけで足りる |
-| Bedrock の Anthropic（Claude）モデル呼び出し | ローカルのサーバから計画生成を試すため（WBS 1.8 以降）。地域横断の推論プロファイルに対応するためリージョンは `*` |
+| Bedrock の Anthropic（Claude）モデル呼び出し | ローカルのサーバから計画生成を試すため。地域横断の推論プロファイルに対応するためリージョンは `*` |
 | Bedrock のモデル一覧の取得 | 利用可能なモデル ID の確認用 |
 | Secrets Manager の読み取り（`ai-schedule-app/*` のみ） | サーバが外部 API キーを読み込むため |
 | CloudFormation・SSM（`/schedule-app/*`）・Route 53 の参照 | `npm run aws:check` でデプロイ状況を確認するため |
 
-上記以外（コンソールでの確認、Bedrock の利用申請、請求の確認など）は前田さんのユーザーで行う。
+上記以外（コンソールでの確認、Bedrock の利用申請、請求の確認など）は管理者ユーザーで行う。
 権限が足りない操作が出てきたら、このファイルとポリシーを同時に更新する。
 
 ## 後で対応すること

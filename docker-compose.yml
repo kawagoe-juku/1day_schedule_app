@@ -8,8 +8,11 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: schedule_app
       TZ: Asia/Tokyo
+    # 時刻は日本時間（Aurora のパラメータと同じ）
+    command: ['postgres', '-c', 'timezone=Asia/Tokyo']
+    # この Mac からだけ接続できるようにする（同じネットワークの他の端末からは接続させない）
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:

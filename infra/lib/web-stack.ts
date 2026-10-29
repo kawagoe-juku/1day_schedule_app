@@ -1,11 +1,4 @@
-import {
-  Annotations,
-  CfnOutput,
-  Duration,
-  RemovalPolicy,
-  Stack,
-  type StackProps,
-} from 'aws-cdk-lib';
+import { Annotations, CfnOutput, Duration, Stack, type StackProps } from 'aws-cdk-lib';
 import type { ICertificate } from 'aws-cdk-lib/aws-certificatemanager';
 import {
   AllowedMethods,
@@ -25,30 +18,20 @@ import {
   type BehaviorOptions,
 } from 'aws-cdk-lib/aws-cloudfront';
 import { HttpOrigin, S3BucketOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
-import {
-  AaaaRecord,
-  ARecord,
-  HostedZone,
-  RecordTarget,
-  type IHostedZone,
-} from 'aws-cdk-lib/aws-route53';
+import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { CloudFrontTarget } from 'aws-cdk-lib/aws-route53-targets';
 import { BlockPublicAccess, Bucket, BucketEncryption, ObjectOwnership } from 'aws-cdk-lib/aws-s3';
 import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import type { ISecret } from 'aws-cdk-lib/aws-secretsmanager';
 import type { Construct } from 'constructs';
 import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { ORIGIN_VERIFY_HEADER, originDomain } from './app-stack.js';
-import { PROJECT, ROOT_DOMAIN, type StageConfig } from './config.js';
+import { API_PATHS, REPO_ROOT, lookupZone, removalPolicyOf } from './common.js';
+import { PROJECT, type StageConfig } from './config.js';
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 /** Flutter Web のビルド成果物（`flutter build web` の出力先） */
-export const DEFAULT_WEB_BUILD_DIR = join(REPO_ROOT, 'app/build/web');
-
-/** API としてサーバ（ALB）へ転送するパス */
-export const API_PATHS = ['/api/*', '/agent/*'] as const;
+const DEFAULT_WEB_BUILD_DIR = join(REPO_ROOT, 'app/build/web');
 
 /**
  * 画面のパス（拡張子のない URL）を /index.html に読み替える（Flutter のページ遷移後の再読み込み対策）。
@@ -69,7 +52,7 @@ export const SPA_REWRITE_CODE = `function handler(event) {
 
 export interface WebStackProps extends StackProps {
   readonly config: StageConfig;
-  /** CloudFront 用の証明書（us-east-1）。crossRegionReferences で受け取る */
+  /** CloudFront 用の証明書（us-east-1 のスタックから受け取る） */
   readonly certificate: ICertificate;
   /** CloudFront だけが ALB に付けるヘッダーの値（App スタックが生成） */
   readonly originVerifySecret: ISecret;
@@ -83,12 +66,12 @@ export interface WebStackProps extends StackProps {
 }
 
 /**
- * WBS 2.6：S3＋CloudFront（要件定義書 4.1.1・4.2.3）。
+ * S3＋CloudFront（要件定義書 4.1.1・4.2.3）。
  *
  * - `/*` は S3（Flutter Web）、`/api/*`・`/agent/*` は ALB（origin.<appDomain>）へ振り分ける。
  * - S3 は非公開で、CloudFront からだけ読める（OAC）。
  * - ALB へは秘密のヘッダーを付けて送り、ALB はそのヘッダーがある要求だけをサーバへ転送する（他人の CloudFront からの接続を防ぐ）。
- * - WAF・セキュリティヘッダーは 9.2、CloudFront のアクセスログは 9.1 で追加する。
+ * - WAF・セキュリティヘッダー・CloudFront のアクセスログはまだ付けていない。
  */
 export class WebStack extends Stack {
   readonly distribution: Distribution;
@@ -96,8 +79,7 @@ export class WebStack extends Stack {
 
   constructor(scope: Construct, id: string, props: WebStackProps) {
     super(scope, id, props);
-    const { stage, appDomain, database } = props.config;
-    const retain = database.deletionProtection;
+    const { stage, appDomain, retainOnDelete: retain } = props.config;
 
     this.bucket = new Bucket(this, 'WebBucket', {
       encryption: BucketEncryption.S3_MANAGED,
@@ -109,7 +91,7 @@ export class WebStack extends Stack {
       lifecycleRules: [
         { id: 'expire-old-versions', noncurrentVersionExpiration: Duration.days(30) },
       ],
-      removalPolicy: retain ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+      removalPolicy: removalPolicyOf(retain),
       autoDeleteObjects: !retain,
     });
 
@@ -160,17 +142,12 @@ export class WebStack extends Stack {
       additionalBehaviors: Object.fromEntries(API_PATHS.map((p) => [p, apiBehavior])),
     });
 
-    const zone: IHostedZone = props.hostedZoneId
-      ? HostedZone.fromHostedZoneAttributes(this, 'Zone', {
-          hostedZoneId: props.hostedZoneId,
-          zoneName: ROOT_DOMAIN,
-        })
-      : HostedZone.fromLookup(this, 'Zone', { domainName: ROOT_DOMAIN });
+    const zone = lookupZone(this, props.hostedZoneId);
     const target = RecordTarget.fromAlias(new CloudFrontTarget(this.distribution));
     new ARecord(this, 'WebRecord', { zone, recordName: appDomain, target });
     new AaaaRecord(this, 'WebRecordIpv6', { zone, recordName: appDomain, target });
 
-    // 画面ファイルの配置。ビルド済み（index.html がある）ときだけ行う。2.7 で自動デプロイに切り替える
+    // 画面ファイルの配置。ビルド済み（index.html がある）ときだけ行う
     const webBuildDir = props.webBuildDir ?? DEFAULT_WEB_BUILD_DIR;
     if (webBuildDir !== false && !existsSync(join(webBuildDir, 'index.html'))) {
       Annotations.of(this).addWarning(

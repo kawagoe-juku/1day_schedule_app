@@ -29,8 +29,13 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ DB_HOST: 'db.example.internal' })).toThrow('DB_NAME');
   });
 
-  it('本番では DB の接続設定が必須', () => {
+  it('本番では DB の接続設定と TLS の CA が必須', () => {
     expect(() => loadConfig({ NODE_ENV: 'production' })).toThrow('DB_HOST または DATABASE_URL');
+    const db = { DATABASE_URL: 'postgres://u:p@db.example.internal:5432/app' };
+    expect(() => loadConfig({ NODE_ENV: 'production', ...db })).toThrow('DB_SSL_CA_PATH');
+    expect(
+      loadConfig({ NODE_ENV: 'production', ...db, DB_SSL_CA_PATH: '/app/certs/ca.pem' }).NODE_ENV,
+    ).toBe('production');
   });
 
   it('不正な値は起動時にエラーになる', () => {

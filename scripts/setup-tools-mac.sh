@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AWS CLI・AWS CDK・Docker のセットアップ（macOS・WBS 1.2 の残り）
+# AWS CLI・AWS CDK・Docker のセットアップ（macOS）
 # 使い方：リポジトリ直下で  bash scripts/setup-tools-mac.sh
 # 管理者権限なしで入るもの（AWS CLI・CDK）は自動で入れる。Docker は権限が必要なため状況を案内する。
 # 何度実行しても安全（入っているものはスキップ）。
@@ -76,7 +76,7 @@ elif [[ "$IS_ADMIN" == "1" ]]; then
   warn "Docker Desktop のインストーラーを開きました。Docker のアイコンを Applications にドラッグし、Docker Desktop を起動して初期設定（利用規約への同意）を済ませてください。"
   warn "社内でDocker Desktopの有償ライセンス要否（従業員250人以上または年商1,000万ドル超の組織は有償）を確認してください。"
 else
-  ng "Docker は管理者権限がないとインストールできません。社内の手続きで Docker Desktop の導入を依頼するか、Claude に「Dockerなしでローカルに PostgreSQL を用意する方法」を相談してください。"
+  ng "Docker は管理者権限がないとインストールできません。社内の手続きで Docker Desktop の導入を依頼するか、PostgreSQL 16 を Mac に直接インストールしてください。"
 fi
 
 step "5. 結果"
@@ -86,5 +86,5 @@ done
 echo
 echo "次の作業："
 echo "・新しいターミナルを開く（または source ~/.zshrc）と、追加した PATH が有効になります"
-echo "・AWS の認証情報は WBS 1.3 で用意したものを設定：aws configure --profile schedule-app-dev（リージョン ap-northeast-1）"
-echo "・Docker を入れたら：npm run db:up → npm run dev → curl http://localhost:3000/api/health/ready（\"db\":\"ok\" で 1.5 完了）"
+echo "・AWS の認証情報（docs/setup/aws-account.md）を設定：aws configure --profile schedule-app-dev（リージョン ap-northeast-1）"
+echo "・Docker を入れたら：npm run db:up → npm run dev → curl http://localhost:3000/api/health/ready（\"db\":\"ok\" なら完了）"

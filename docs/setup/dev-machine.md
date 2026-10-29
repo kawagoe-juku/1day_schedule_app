@@ -1,6 +1,6 @@
 # 開発端末のセットアップ（macOS）
 
-WBS 1.2 の手順書。上から順に実施する。
+開発端末のセットアップ手順。上から順に実施する。
 
 ## 1. Homebrew
 
@@ -49,7 +49,7 @@ aws --version
 cdk --version
 ```
 
-## 6. AWS の認証情報（WBS 1.3 で用意したもの）
+## 6. AWS の認証情報（[`aws-account.md`](aws-account.md) で用意したもの）
 
 ユーザーの分け方と cdk bootstrap の手順は [`aws-account.md`](aws-account.md) を参照。
 
@@ -59,7 +59,7 @@ aws configure --profile schedule-app-dev
 aws sts get-caller-identity --profile schedule-app-dev
 ```
 
-## 完了の確認（WBS 1.2 の完了基準）
+## 完了の確認
 
 - [ ] `flutter doctor` で Web のチェックがすべて OK
 - [ ] `aws sts get-caller-identity --profile schedule-app-dev` が開発用アカウントで成功する

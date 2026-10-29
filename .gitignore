@@ -4,12 +4,6 @@ dist/
 coverage/
 cdk.out/
 
-# Flutter
-app/.dart_tool/
-app/build/
-app/.flutter-plugins
-app/.flutter-plugins-dependencies
-
 # 環境変数・秘密情報（コミット禁止）
 .env
 .env.*

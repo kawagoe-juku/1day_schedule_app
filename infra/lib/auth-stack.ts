@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { Duration, Stack, type StackProps } from 'aws-cdk-lib';
 import {
   AccountRecovery,
   FeaturePlan,
@@ -9,13 +9,14 @@ import {
 } from 'aws-cdk-lib/aws-cognito';
 import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
+import { removalPolicyOf } from './common.js';
 import { PROJECT, ssmPath, type StageConfig } from './config.js';
 
 /**
  * セッションの有効期間。要件「無操作1日でセッション終了」は、Cognito では
- * リフレッシュトークンの有効期間（発行から1日）で代用する（2026-10-27 決定、要件定義からの差分）。
+ * リフレッシュトークンの有効期間（発行から1日）で代用する（要件定義からの差分。API 仕様に記載）。
  */
-export const SESSION = {
+const SESSION = {
   accessAndIdTokenHours: 1,
   refreshTokenDays: 1,
 } as const;
@@ -25,11 +26,11 @@ export interface AuthStackProps extends StackProps {
 }
 
 /**
- * WBS 2.4：Cognito User Pool と Web 用 App Client（要件定義書 3.3.1）。
+ * Cognito User Pool と Web 用 App Client（要件定義書 3.3.1）。
  *
  * - メールアドレス＋パスワード。パスワードは8文字以上・大文字・小文字・数字。
  * - ログイン失敗によるロックは設けない（Cognito 標準の一時停止は無効化できないため受け入れる。要件定義からの差分）。
- * - 確認コードのメールは Cognito 標準（本番は 9.7 で SES に切り替える）。
+ * - 確認コードのメールは Cognito 標準の送信機能を使う（送信数の上限が足りなくなれば SES に切り替える）。
  * - ID はサーバ（JWT 検証）と Flutter のビルド設定から使うため SSM パラメータに保存する。
  */
 export class AuthStack extends Stack {
@@ -38,7 +39,7 @@ export class AuthStack extends Stack {
 
   constructor(scope: Construct, id: string, props: AuthStackProps) {
     super(scope, id, props);
-    const { stage, auth } = props.config;
+    const { stage, retainOnDelete } = props.config;
 
     this.userPool = new UserPool(this, 'UserPool', {
       userPoolName: `${PROJECT}-${stage}-users`,
@@ -56,7 +57,6 @@ export class AuthStack extends Stack {
         requireUppercase: true,
         requireDigits: true,
         requireSymbols: false,
-        tempPasswordValidity: Duration.days(1),
       },
       accountRecovery: AccountRecovery.EMAIL_ONLY,
       email: UserPoolEmail.withCognito(),
@@ -65,8 +65,8 @@ export class AuthStack extends Stack {
         emailSubject: '【AIスケジュール外出支援】確認コードのお知らせ',
         emailBody: '確認コードは {####} です。アプリの画面に入力してください。',
       },
-      deletionProtection: auth.deletionProtection,
-      removalPolicy: auth.deletionProtection ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+      deletionProtection: retainOnDelete,
+      removalPolicy: removalPolicyOf(retainOnDelete),
     });
 
     this.webClient = this.userPool.addClient('WebClient', {
@@ -93,8 +93,5 @@ export class AuthStack extends Stack {
       stringValue: this.webClient.userPoolClientId,
       description: 'Cognito App Client ID（Web 用）',
     });
-
-    new CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId });
-    new CfnOutput(this, 'WebClientId', { value: this.webClient.userPoolClientId });
   }
 }

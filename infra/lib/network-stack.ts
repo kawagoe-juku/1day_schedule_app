@@ -17,7 +17,7 @@ import { PROJECT, ssmPath, type StageConfig } from './config.js';
 /** サーバ（ECS）が待ち受けるポート */
 export const APP_PORT = 3000;
 /** CloudFront からオリジンへの接続元をまとめた AWS 管理のプレフィックスリスト */
-export const CLOUDFRONT_ORIGIN_PREFIX_LIST = 'com.amazonaws.global.cloudfront.origin-facing';
+const CLOUDFRONT_ORIGIN_PREFIX_LIST = 'com.amazonaws.global.cloudfront.origin-facing';
 
 export interface NetworkStackProps extends StackProps {
   readonly config: StageConfig;
@@ -32,14 +32,13 @@ export interface NetworkStackProps extends StackProps {
 }
 
 /**
- * WBS 2.2：VPC・サブネット・NAT・セキュリティグループ（要件定義書 4.2.1）。
+ * VPC・サブネット・NAT・セキュリティグループ（要件定義書 4.2.1）。
  *
  * - サブネットは 公開（ALB・NAT）／アプリ層（ECS）／データ層（Aurora、外部への経路なし）の3層。
  * - NAT Gateway には EgressIp の固定 IP を割り当てる（Google のサーバ用キーの IP 制限と一致させる）。
  * - SG：ALB は 443 を CloudFront からのみ／ECS は ALB からのみ／Aurora は ECS からのみ。
  *   送信は ALB→ECS(3000)、ECS→インターネット(443)・Aurora(5432) のみ。
- * - Bedrock 等の VPC エンドポイントは作らない（NAT 経由。U10）。S3 のゲートウェイ型は無料なので付ける。
- * - VPC の CIDR は 1.10 の確認までは仮置き（config.ts）。
+ * - Bedrock 等の VPC エンドポイントは作らない（費用を抑えるため NAT 経由）。S3 のゲートウェイ型は無料なので付ける。
  */
 export class NetworkStack extends Stack {
   readonly vpc: Vpc;
@@ -133,7 +132,5 @@ export class NetworkStack extends Stack {
       'HTTPS to AWS and external APIs',
     );
     this.appSecurityGroup.addEgressRule(this.dbSecurityGroup, Port.tcp(5432), 'to Aurora');
-    // 2.5 の注意：ALB・ECS は Network の SG をそのまま使い、リスナーは open: false にする
-    // （CDK が 0.0.0.0/0:443 や重複したルールを自動で足さないように）
   }
 }

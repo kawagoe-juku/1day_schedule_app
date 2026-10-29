@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Flutter（Web）開発環境のセットアップ（macOS・WBS 1.2）
+# Flutter（Web）開発環境のセットアップ（macOS）
 # 使い方：リポジトリ直下で  bash scripts/setup-flutter-mac.sh
 # 何度実行しても安全（入っているものはスキップ）。
 set -euo pipefail
@@ -56,30 +56,13 @@ step "4. flutter doctor（Web のチェックだけ見れば十分）"
 flutter doctor || true
 echo "※ Xcode・Android Studio・Android toolchain の警告は Web版では無視してよい"
 
-step "5. Flutter プロジェクト（app/）の作成"
-if [[ -f "$APP_DIR/pubspec.yaml" ]]; then
-  ok "app/ はすでに Flutter プロジェクトです（作成をスキップ）"
-else
-  KEEP_README="$(mktemp)"
-  [[ -f "$APP_DIR/README.md" ]] && cp "$APP_DIR/README.md" "$KEEP_README"
-  (cd "$APP_DIR" && flutter create . --project-name ai_schedule_app --platforms web \
-     --description "AIスケジュール外出支援サービス（Web版）")
-  [[ -s "$KEEP_README" ]] && cp "$KEEP_README" "$APP_DIR/README.md"
-  ok "app/ に Flutter プロジェクトを作成しました（README.md は元の内容を維持）"
-fi
-
-step "6. 動作確認（依存取得・静的解析・テスト・Webビルド）"
+step "5. 動作確認（依存取得・静的解析・テスト・Webビルド）"
 cd "$APP_DIR"
 flutter pub get
 flutter analyze
 flutter test
 flutter build web
 ok "Webビルド成功：app/build/web"
-
-step "7. ほかの開発ツールの状況（1.2 の完了確認用・参考）"
-for c in node npm docker aws cdk; do
-  if command -v "$c" >/dev/null 2>&1; then ok "$c: $($c --version 2>&1 | head -1)"; else warn "$c: 未インストール（docs/setup/dev-machine.md 参照）"; fi
-done
 
 step "完了"
 echo "画面を起動するには：  cd app && flutter run -d chrome"

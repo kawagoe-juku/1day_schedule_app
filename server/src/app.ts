@@ -43,7 +43,7 @@ export async function buildApp({ config, db, logger }: BuildAppOptions): Promise
   const app = Fastify({
     logger: logger ?? {
       level: config.LOG_LEVEL,
-      // 認証情報をログに出さない
+      // 認証情報をログに出さない（既定の要求ログはヘッダーを出さないが、出力項目を増やしたときの保険）
       redact: ['req.headers.authorization', 'req.headers.cookie'],
     },
     genReqId: (req) => {
@@ -75,7 +75,7 @@ export async function buildApp({ config, db, logger }: BuildAppOptions): Promise
     const status = error.statusCode;
     if (typeof status === 'number' && status >= 400 && status < 500) {
       const { code, message } = CLIENT_ERRORS[status] ?? DEFAULT_CLIENT_ERROR;
-      request.log.info({ err: error }, 'client error');
+      request.log.info({ statusCode: status, code: error.code }, 'client error');
       return reply.code(status).send(errorBody(code, message, request.id));
     }
     request.log.error({ err: error }, 'unhandled error');

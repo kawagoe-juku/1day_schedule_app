@@ -5,7 +5,7 @@ const ConfigSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  DATABASE_URL: z.string().url().optional(),
+  DATABASE_URL: z.url().optional(),
   /**
    * AWS 上では接続情報を Secrets Manager から項目ごとに受け取る（ECS の secrets）。
    * DB_HOST があれば、DATABASE_URL より優先して接続先を組み立てる。
@@ -33,6 +33,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (c.NODE_ENV === 'production' && !c.DB_HOST && !c.DATABASE_URL) {
     throw new Error(
       '環境変数が不正です: 本番（NODE_ENV=production）では DB_HOST または DATABASE_URL が必要です',
+    );
+  }
+  // Aurora は TLS 必須。CA の指定漏れを起動時に見つける（コンテナでは Dockerfile が設定する）
+  if (c.NODE_ENV === 'production' && !c.DB_SSL_CA_PATH) {
+    throw new Error(
+      '環境変数が不正です: 本番（NODE_ENV=production）では DB_SSL_CA_PATH が必要です',
     );
   }
   if (c.DB_HOST) {

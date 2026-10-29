@@ -12,15 +12,15 @@
 
 ```text
 .
-├── api/            API仕様（OpenAPI 3.1）。サーバ・アプリの型生成の元
-├── app/            Flutter Web クライアント（WBS 4.1 で作成）
+├── api/            API仕様（openapi.yaml が正。Swagger Editor 等で閲覧）。サーバ・アプリの型生成の元
+├── app/            Flutter Web クライアント
 ├── server/         サーバ（TypeScript + Fastify）。/api と /agent を提供
-├── infra/          AWS CDK（WBS 2.1 で作成）
+├── infra/          AWS CDK（[`infra/README.md`](infra/README.md)）
 ├── docs/
 │   ├── Alli/          要件定義書・見積書・DB定義書・エンティティ定義・紙芝居HTML
 │   ├── adr/           設計判断の記録
 │   ├── design/        詳細設計書（draw.io）
-│   ├── setup/         開発端末のセットアップ手順
+│   ├── setup/         開発端末・AWS アカウントのセットアップ手順
 │   └── 試験項目書/     結合試験項目書・総合試験項目書
 ├── scripts/        開発用スクリプト
 └── docker-compose.yml  ローカル開発用 PostgreSQL
@@ -32,8 +32,8 @@
 | --- | --- | --- |
 | Node.js | 22 LTS（`.nvmrc`） | サーバ・CDK |
 | Docker Desktop | 最新 | ローカルDB |
-| Flutter SDK | 安定版（Web有効） | クライアント（4.1以降） |
-| AWS CLI / AWS CDK | v2 | デプロイ（2.10以降） |
+| Flutter SDK | 安定版（Web有効） | クライアント |
+| AWS CLI / AWS CDK | v2 | デプロイ |
 
 インストール手順は [`docs/setup/dev-machine.md`](docs/setup/dev-machine.md) を参照。
 
@@ -78,7 +78,7 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run aws:check` | AWS の状態確認（変更しない。結果は `logs/aws-check.log`） |
 | `npm run infra:release` | インフラのテスト→差分表示→確認のうえ開発環境へデプロイ |
 | `npm run tools:setup` | AWS CLI・AWS CDK の導入と Docker の確認（初回のみ） |
-| `npm run app:setup` | Flutter（Web）環境のセットアップと `app/` の作成（初回のみ） |
+| `npm run app:setup` | Flutter（Web）環境のセットアップと動作確認（初回のみ） |
 | `npm run app:dev` | Webアプリを Chrome で起動 |
 | `npm run app:test` | Webアプリの静的解析とテスト |
 | `npm run app:build` | Webアプリをビルド（`app/build/web`） |

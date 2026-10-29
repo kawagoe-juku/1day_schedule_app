@@ -12,7 +12,7 @@ export interface EgressIpStackProps extends StackProps {
  * 外部 API（Google Maps など）から見える AWS 側の出口 IP を固定で確保する。
  *
  * - VPC より先に作り、Google のサーバ用キーの IP 制限に登録する。
- * - NAT Gateway は Network スタック（WBS 2.2）が SSM パラメータ経由ででこの IP を割り当てて作る。
+ * - NAT Gateway は Network スタックが SSM パラメータ経由でこの IP を割り当てて作る。
  * - スタックを削除しても IP は解放しない（キーの登録を変えずに済むように）。
  */
 export class EgressIpStack extends Stack {

@@ -15,7 +15,7 @@ const build = (
     env: { account: '123456789012', region: 'ap-northeast-1' },
   });
 const synth = (stage: keyof typeof STAGES, eipAllocationIds?: string[]) =>
-  Template.fromStack(build(stage, eipAllocationIds ?? ['eipalloc-1', 'eipalloc-2']));
+  Template.fromStack(build(stage, eipAllocationIds));
 
 const subnetsByType = (t: Template) => {
   const subnets = Object.values(t.findResources('AWS::EC2::Subnet')) as {

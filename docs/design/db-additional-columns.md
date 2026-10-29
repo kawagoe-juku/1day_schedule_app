@@ -1,6 +1,6 @@
 # DB定義の追加カラム一覧と判断事項（WBS 2.11 案）
 
-- 作成：2026-10-26（Claude 案）／承認：未
+- 状態：案（未承認）
 - 対象：`docs/Alli/DB定義書.txt`（11テーブル）と `api/openapi.yaml`（v0.2.x）の差分
 - 承認後、PostgreSQL 版の DB 定義書を `docs/design/DB定義書.md` として作成し、DDL（WBS 2.9）はこれを正とする。原本（`docs/Alli/`）は変更しない。
 
@@ -149,8 +149,8 @@ Web 版では出発検知を行わない（準備のみ）ため、テーブル�
 | calendar_event | `uq_calendar_event_integration_external (calendar_integration_id, external_event_id, event_date)` | 同じ予定の重複キャッシュを防ぐ |
 | point_program | `uq_point_program_user_id_program_code` | 上記 2.10 |
 
-## 4. 承認後の作業
+## 4. 承認後の反映先
 
-1. 前田さんの承認（表の「承認」欄、または一括承認）
-2. Claude が `docs/design/DB定義書.md`（PostgreSQL 版）と詳細設計書の ER 図を更新
-3. WBS 2.9 で Drizzle のスキーマとマイグレーションを作成
+- `docs/design/DB定義書.md`（PostgreSQL 版）
+- 詳細設計書の ER 図
+- DB のスキーマとマイグレーション（WBS 2.9）

@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "description": "APIサービス（/api）とAI連携基盤（/agent）",
-  "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.build.json",

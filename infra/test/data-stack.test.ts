@@ -2,7 +2,8 @@ import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { STAGES } from '../lib/config.js';
-import { DataStack, toRetentionDays } from '../lib/data-stack.js';
+import { toRetentionDays } from '../lib/common.js';
+import { DataStack } from '../lib/data-stack.js';
 import { NetworkStack } from '../lib/network-stack.js';
 import { externalSecretName } from '../lib/secrets.js';
 
@@ -51,21 +52,27 @@ describe('DataStack', () => {
     t.resourceCountIs('AWS::RDS::DBInstance', 1);
   });
 
-  it('prod は 0.5〜4 ACU、別 AZ に読み取り用1台、削除保護あり', () => {
-    const t = synth('prod');
-    const cluster = Object.values(t.findResources('AWS::RDS::DBCluster'))[0] as {
-      Properties: {
-        ServerlessV2ScalingConfiguration: Record<string, number>;
-        DeletionProtection: boolean;
+  it.each([
+    ['stg', 2, 1],
+    ['prod', 4, 2],
+  ] as const)(
+    '%s は 0.5〜%d ACU で自動停止なし、インスタンス %d 台、削除保護あり',
+    (stage, max, count) => {
+      const t = synth(stage);
+      const cluster = Object.values(t.findResources('AWS::RDS::DBCluster'))[0] as {
+        Properties: {
+          ServerlessV2ScalingConfiguration: Record<string, number>;
+          DeletionProtection: boolean;
+        };
       };
-    };
-    expect(cluster.Properties.ServerlessV2ScalingConfiguration).toEqual({
-      MinCapacity: 0.5,
-      MaxCapacity: 4,
-    });
-    expect(cluster.Properties.DeletionProtection).toBe(true);
-    t.resourceCountIs('AWS::RDS::DBInstance', 2);
-  });
+      expect(cluster.Properties.ServerlessV2ScalingConfiguration).toEqual({
+        MinCapacity: 0.5,
+        MaxCapacity: max,
+      });
+      expect(cluster.Properties.DeletionProtection).toBe(true);
+      t.resourceCountIs('AWS::RDS::DBInstance', count);
+    },
+  );
 
   it('スタックを削除してもスナップショットを残す', () => {
     synth('dev').hasResource('AWS::RDS::DBCluster', {
@@ -74,9 +81,9 @@ describe('DataStack', () => {
     });
   });
 
-  it('通信は TLS 必須', () => {
+  it('通信は TLS 必須で、時刻は日本時間', () => {
     synth('dev').hasResourceProperties('AWS::RDS::DBClusterParameterGroup', {
-      Parameters: { 'rds.force_ssl': '1' },
+      Parameters: { 'rds.force_ssl': '1', timezone: 'Asia/Tokyo' },
     });
   });
 
@@ -88,20 +95,6 @@ describe('DataStack', () => {
     expect(instances.every((i) => i.Properties.PubliclyAccessible === false)).toBe(true);
     const azs = instances.map((i) => i.Properties.AvailabilityZone);
     expect(azs.sort()).toEqual(['ap-northeast-1a', 'ap-northeast-1c']);
-  });
-
-  it('stg は 0.5〜2 ACU で自動停止なし、削除保護あり', () => {
-    const cluster = Object.values(synth('stg').findResources('AWS::RDS::DBCluster'))[0] as {
-      Properties: {
-        ServerlessV2ScalingConfiguration: Record<string, number>;
-        DeletionProtection: boolean;
-      };
-    };
-    expect(cluster.Properties.ServerlessV2ScalingConfiguration).toEqual({
-      MinCapacity: 0.5,
-      MaxCapacity: 2,
-    });
-    expect(cluster.Properties.DeletionProtection).toBe(true);
   });
 
   it('DB はデータ層サブネットに置き、Network の DB 用 SG を使う', () => {

@@ -19,7 +19,6 @@ const synth = (stage: keyof typeof STAGES, webBuildDir: string | false = false) 
     config,
     purpose: 'cloudfront',
     hostedZoneId: zoneId,
-    crossRegionReferences: true,
     env: { account, region: 'us-east-1' },
   });
   const secrets = new Stack(app, `T-${stage}-Secrets`, {
@@ -32,7 +31,6 @@ const synth = (stage: keyof typeof STAGES, webBuildDir: string | false = false) 
     originVerifySecret,
     webBuildDir,
     hostedZoneId: zoneId,
-    crossRegionReferences: true,
     env: { account, region: 'ap-northeast-1' },
   });
   return Template.fromStack(stack);
