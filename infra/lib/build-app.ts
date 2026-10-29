@@ -55,7 +55,7 @@ export function buildApp(
     config,
     description: `${PROJECT} ${config.stage}: VPC・サブネット・NAT・セキュリティグループ`,
   });
-  network.addDependency(egressIp); // 固定 IP の SSM パラメータを読むため
+  network.addStackDependency(egressIp); // 固定 IP の SSM パラメータを読むため
   const auth = new AuthStack(app, `${prefix}-Auth`, {
     env,
     config,
