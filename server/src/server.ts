@@ -1,6 +1,6 @@
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
-import { createDbChecker } from './db.js';
+import { createDb } from './db/client.js';
 
 // server/.env があれば読み込む（本番は ECS の環境変数・Secrets Manager を使う）
 try {
@@ -11,10 +11,10 @@ try {
 
 const config = loadConfig();
 const db = config.DATABASE_URL
-  ? createDbChecker(config.DATABASE_URL, {
+  ? createDb(config.DATABASE_URL, {
       sslCaPath: config.DB_SSL_CA_PATH,
-      // ping はリクエストを受けてから呼ばれるので、この時点では app はできている
-      onError: (err) => app.log.warn({ err }, 'db check failed'),
+      // 接続の失敗はリクエストを受けてから起きるので、この時点では app はできている
+      onError: (err) => app.log.warn({ err }, 'db connection failed'),
     })
   : undefined;
 const app = await buildApp({ config, db });

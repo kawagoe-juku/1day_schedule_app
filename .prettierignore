@@ -5,3 +5,4 @@ docs
 app
 *.md
 package-lock.json
+server/drizzle/meta

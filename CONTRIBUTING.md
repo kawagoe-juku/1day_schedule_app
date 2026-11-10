@@ -53,7 +53,8 @@
 ## テスト
 
 - テストは各ワークスペースの `test/`（`server/test/`・`infra/test/`）に置き、ファイル名は `*.test.ts`。
-- 外部サービス（Bedrock・Google Maps・乗換案内・カレンダー）は単体テストではモックにする。
+- 外部サービス（Bedrock・Google Maps・乗換案内・カレンダー）は単体テストではモックにする。HTTP で呼ぶものは `server/test/helpers/fake-fetch.ts` の `createFakeFetch()` を、クライアントに `fetch` の代わりに渡す。
+- DB を使うテストは `server/test/db/` に置き、`useTestDb()`（`server/test/helpers/test-db.ts`）を使う。`npm run test:db` で動かす（`npm test` と自動デプロイには含めない）。
 - 不具合を直すときは、再現するテストを先に追加する。
 
 ## API 仕様の変更

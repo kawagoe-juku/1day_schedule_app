@@ -19,7 +19,7 @@
 ├── docs/
 │   ├── Alli/          要件定義書・見積書・DB定義書・エンティティ定義・紙芝居HTML
 │   ├── adr/           設計判断の記録
-│   ├── design/        詳細設計書（draw.io）・DB 定義の追加カラム（案）
+│   ├── design/        詳細設計書（draw.io）・DB 定義書（PostgreSQL 版）・DB 定義の追加カラム
 │   ├── setup/         開発端末・AWS アカウントのセットアップ手順
 │   └── 試験項目書/     結合試験項目書・総合試験項目書
 ├── scripts/        開発・デプロイ用スクリプト（npm scripts から呼ぶ）
@@ -49,7 +49,10 @@ npm run db:up
 # 3. サーバの環境変数を用意
 cp server/.env.example server/.env
 
-# 4. サーバを起動（ファイル変更で自動再起動）
+# 4. ローカルDBにテーブルを作成
+npm run db:migrate
+
+# 5. サーバを起動（ファイル変更で自動再起動）
 npm run dev
 ```
 
@@ -68,6 +71,7 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | --- | --- |
 | `npm run dev` | サーバを開発モードで起動 |
 | `npm test` | 単体テスト（Vitest） |
+| `npm run test:db` | DB を使うテスト（ローカルDBが必要。テスト用の `schedule_app_test` を自動で作り、データは残さない） |
 | `npm run lint` | ESLint と Prettier のチェック |
 | `npm run format` | Prettier で整形 |
 | `npm run typecheck` | TypeScript の型チェック |
@@ -75,6 +79,9 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run api:check` | OpenAPI 定義のチェック（参照切れ・要件APIの網羅） |
 | `npm run db:up` / `db:down` | ローカルDBの起動・停止 |
 | `npm run db:psql` | ローカルDBに psql で接続 |
+| `npm run db:migrate` | 未適用のマイグレーションを適用（接続先は `server/.env` の `DATABASE_URL`） |
+| `npm run db:rollback` | 直近のマイグレーションを1件取り消す（テーブルとデータが消える。本番では実行できない） |
+| `npm run db:generate -- --name <名前>` | スキーマ定義の変更からマイグレーションの SQL を作る |
 | `npm run aws:check` | 開発環境の AWS の状態確認（変更しない。結果は `logs/aws-check.log`） |
 | `npm run infra:release` | 開発環境への手動デプロイ（初回・障害時用）。テスト→差分表示→確認のうえデプロイ |
 | `npm run -s dev:token -- <メール>` | 開発環境にログインしてアクセストークンを出力（API の動作確認用。`server/.env` の Cognito の設定を使う） |
@@ -83,6 +90,57 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run app:dev` | Webアプリを Chrome で起動 |
 | `npm run app:test` | Webアプリの静的解析とテスト |
 | `npm run app:build` | Webアプリをビルド（`app/build/web`） |
+
+## Feature Flag
+
+「準備のみ」の機能は Feature Flag で止めてある。切り替えは環境変数だけで行い、既定はすべて OFF（`true` のときだけ ON。`true`／`false` 以外は起動時にエラー）。定義は `server/src/features.ts`。
+
+| 環境変数 | 機能 |
+| --- | --- |
+| `FEATURE_VOICE_INPUT` | 音声入力 |
+| `FEATURE_NOTIFICATION` | 通知の配信 |
+| `FEATURE_POSTPONE_REPLAN` | 延期再計画 |
+| `FEATURE_DEPARTURE_DETECTION` | 出発検知 |
+| `FEATURE_OPERATION_MONITORING` | 運行情報の監視 |
+| `FEATURE_STAGED_NOTIFICATION` | 出発アラートの段階通知 |
+
+OFF の機能の API は、処理の最初に `assertFeatureEnabled(config, '<機能名>')` を呼び、`501 FEATURE_DISABLED` を返す。
+
+## 外部 API クライアント
+
+外部 API は `server/src/adapters/` のクライアント経由で呼ぶ（`createExternalClients(config)` で作る）。
+
+| ファイル | 呼び出し先 |
+| --- | --- |
+| `google-maps.ts` | Geocoding API、Places API (New)、Routes API（徒歩・自転車・車） |
+| `navitime.ts` | NAVITIME（RapidAPI）：乗換経路 `route_transit`、駅名の候補 `transport_node/autocomplete` |
+| `http.ts` | 共通処理：タイムアウト（既定4秒）、やり直し（既定1回。5xx・429・タイムアウト・通信エラーのみ） |
+| `metrics.ts` | 呼び出し回数のメトリクス（CloudWatch の Embedded Metric Format を標準出力に1行ずつ出す） |
+
+- 失敗は `ExternalApiError` になり、API としては `502 EXTERNAL_SERVICE_ERROR` を返す。原因はログにだけ残す。
+- メトリクスは名前空間 `ScheduleApp/ExternalApi` の `CallCount`・`DurationMs`（区分：Stage・Service・Operation・Outcome）。やり直しも1回ずつ数える。
+- RapidAPI は API ごとに購読が必要。駅名の候補は「NAVITIME Transport」の購読が要る（乗換経路の「Route(totalnavi)」とは別）。
+
+## DB マイグレーション
+
+テーブル定義の正は [`docs/design/DB定義書.md`](docs/design/DB定義書.md)。マイグレーションは Drizzle ORM（drizzle-kit）で管理する。
+
+| 場所 | 内容 |
+| --- | --- |
+| `server/src/db/schema.ts` | スキーマ定義（TypeScript） |
+| `server/src/db/client.ts` | DB 接続（`createDb`）とトランザクションの型 |
+| `server/src/db/repositories/` | テーブルごとのリポジトリ（`repositories(db)` でまとめて得る） |
+| `server/drizzle/NNNN_<名前>.sql` | 適用する SQL（`db:generate` が作る。手で直さない） |
+| `server/drizzle/down/NNNN_<名前>.sql` | 取り消す SQL（手で書く。無いとテストが失敗する） |
+
+テーブル定義を変えるとき：
+
+1. `docs/design/DB定義書.md` と `server/src/db/schema.ts` を変更する。
+2. `npm run db:generate -- --name <名前>` で SQL を作り、内容を確かめる。
+3. 同じ名前で `server/drizzle/down/` に取り消し用の SQL を書く。
+4. ローカルDBで `npm run db:migrate` → `npm run db:rollback` → `npm run db:migrate` が通ることを確かめる。
+
+開発環境（Aurora）への適用手順はまだ用意していない（自動デプロイには組み込んでいない）。
 
 ## デプロイ
 
