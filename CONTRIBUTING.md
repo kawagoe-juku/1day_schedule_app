@@ -9,6 +9,7 @@
 | `fix/<概要>` | 不具合修正 |
 
 - 作業は `main` からブランチを切り、プルリクエストで `main` に取り込む。
+- プルリクエストを作る・更新すると、Claude が自動でレビューし、指摘を該当行へのコメントとして付ける（`.github/workflows/claude-code-review.yml`。下書きの PR と、すでに Claude のコメントがある PR は対象外）。指摘は参考情報で、取り込むかどうかは人が判断する。
 - マージ前に `npm run lint`・`npm run typecheck`・`npm test`・`npm run api:check`・`npm run app:test` がすべて通っていること（自動デプロイの最初にも同じ確認を行い、失敗するとデプロイしない。手元でまとめて確かめるには `bash scripts/ci-build.sh`）。
 
 ## コミットメッセージ
