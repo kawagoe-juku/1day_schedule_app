@@ -12,6 +12,12 @@ interface JournalEntry {
   tag: string;
 }
 
+try {
+  process.loadEnvFile('.env');
+} catch {
+  // .env がなければ何もしない
+}
+
 if (process.env.NODE_ENV === 'production') {
   throw new Error('本番（NODE_ENV=production）ではロールバックを実行できません');
 }
