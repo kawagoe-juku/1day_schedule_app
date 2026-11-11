@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import type { DbChecker } from '../src/db.js';
+import type { DbChecker } from '../src/db/client.js';
 
 const config = loadConfig({ NODE_ENV: 'test', APP_VERSION: '9.9.9' });
 const fakeDb = (ok: boolean): DbChecker => ({ ping: async () => ok, close: async () => {} });

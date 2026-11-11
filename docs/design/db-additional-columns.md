@@ -1,25 +1,25 @@
-# DB定義の追加カラム一覧と判断事項（WBS 2.11 案）
+# DB定義の追加カラム一覧と判断事項（WBS 2.11）
 
-- 状態：案（未承認）
+- 状態：承認済み（2026-11-10、前田。D1〜D11 と追加・変更・削除カラムを案のとおり承認）
 - 対象：`docs/Alli/DB定義書.txt`（11テーブル）と `api/openapi.yaml`（v0.3.0）の差分
-- 承認後、PostgreSQL 版の DB 定義書を `docs/design/DB定義書.md` として作成し、DDL（WBS 2.9）はこれを正とする。原本（`docs/Alli/`）は変更しない。
+- 承認内容は PostgreSQL 版の DB 定義書 `docs/design/DB定義書.md` に反映済み。DDL（WBS 2.9）はこれを正とする。原本（`docs/Alli/`）は変更しない。
 - 文中の U2 などの番号は、詳細設計書（`docs/design/詳細設計書.drawio`）15ページ「未決事項」の番号。
 
 ## 1. 判断が必要な事項
 
 | # | 論点 | 案 | 理由 | 承認 |
 | --- | --- | --- | --- | --- |
-| D1 | DBMS と型の読み替え（U2） | PostgreSQL 16（Aurora）。`INT`→`integer`（主キーは `integer GENERATED ALWAYS AS IDENTITY`）、`DATETIME`→`timestamptz`、`TINYINT(1)`→`boolean`、`JSON`→`jsonb`、`DOUBLE`→`double precision`、`VARCHAR(n)`→`varchar(n)`。文字コード・照合順序・エンジンの記載は削除 | 要件の Aurora PostgreSQL に合わせる。時刻はタイムゾーン付きで保存し、表示時に日本時間へ変換する | |
-| D2 | ユーザーの識別子（U3） | `user.id` は **Cognito の sub（`varchar(64)`）を主キー**にする。他テーブルの `user_id` も同じ型。`cognito_user_id` 列は廃止（`id` と同じになるため） | エンティティ定義の回答（2026-08-31）で「user_id は Cognito sub に統一」と決定済み。JWT の sub でそのまま引ける | |
-| D3 | email を DB に持つか | **持たない**。プロファイル取得時は JWT（ID トークン）の email を返す | 正本は Cognito。二重管理による不一致と、個人情報の保存箇所を減らす | |
-| D4 | 論理削除と退会（U4） | 退会は**物理削除**（要件どおり）。`user` の `is_deleted`・`deleted_at` は廃止。子テーブルは `ON DELETE CASCADE` に変更し、退会時に一括削除 | 論理削除のままだと退会後も個人情報が残り、要件と矛盾する | |
-| D5 | 他テーブルの論理削除 | `plan`・`plan_item`・`memo`・`routine` などの `is_deleted`・`deleted_at` も**廃止**し、削除は物理削除。監査が必要な `slot_evaluation`・`agent_session` は計画の削除に合わせて CASCADE | API に「削除済みを見る」機能がなく、論理削除の条件漏れによる不具合を避ける | |
-| D6 | 作成者・更新者列 | `created_by_user_id`・`updated_by_user_id` は**廃止** | 本人以外が更新する経路がなく、常に `user_id` と同じになる | |
-| D7 | 移動手段「バス」 | `transport_mode` の選択肢から**削除**（徒歩・自転車・車・電車の4種） | API 仕様（TransportMode）で「バス・タクシーは対象外」と決定済み | |
-| D8 | 選択肢の値 | 日本語（'遅い' 等）ではなく、API と同じ英字コード（`slow`/`normal`/`fast` 等）で保存し、CHECK 制約を付ける | API 仕様の決定（2026-10-15）に合わせ、変換処理をなくす | |
-| D9 | ルーティンの単発スキップ（U5） | `is_skipped` を廃止し、`skipped_date date`（スキップした日。日本時間）を追加。`skippedToday` は「`skipped_date` = 今日」で判定 | `is_skipped` では翌日に自動で解除できない | |
-| D10 | 生成回数の保存先（U6） | 新しいテーブル `generation_quota`（利用者×日付ごとの回数）を追加（2.11） | 13秒打ち切り（502）は数えないなど、計画の件数とは一致しない。計画を物理削除しても回数が戻らないよう、計画とは別に持つ | |
-| D11 | カレンダー連携のトークン | `access_token_secret_arn`・`refresh_token_secret_arn`・`token_expires_at`・`external_account_id` を廃止し、`secret_name` 1列に集約 | エンティティ定義の回答（2026-08-31）で決定済み | |
+| D1 | DBMS と型の読み替え（U2） | PostgreSQL 16（Aurora）。`INT`→`integer`（主キーは `integer GENERATED ALWAYS AS IDENTITY`）、`DATETIME`→`timestamptz`、`TINYINT(1)`→`boolean`、`JSON`→`jsonb`、`DOUBLE`→`double precision`、`VARCHAR(n)`→`varchar(n)`。文字コード・照合順序・エンジンの記載は削除 | 要件の Aurora PostgreSQL に合わせる。時刻はタイムゾーン付きで保存し、表示時に日本時間へ変換する | 承認（2026-11-10） |
+| D2 | ユーザーの識別子（U3） | `user.id` は **Cognito の sub（`varchar(64)`）を主キー**にする。他テーブルの `user_id` も同じ型。`cognito_user_id` 列は廃止（`id` と同じになるため） | エンティティ定義の回答（2026-08-31）で「user_id は Cognito sub に統一」と決定済み。JWT の sub でそのまま引ける | 承認（2026-11-10） |
+| D3 | email を DB に持つか | **持たない**。プロファイル取得時は JWT（ID トークン）の email を返す | 正本は Cognito。二重管理による不一致と、個人情報の保存箇所を減らす | 承認（2026-11-10） |
+| D4 | 論理削除と退会（U4） | 退会は**物理削除**（要件どおり）。`user` の `is_deleted`・`deleted_at` は廃止。子テーブルは `ON DELETE CASCADE` に変更し、退会時に一括削除 | 論理削除のままだと退会後も個人情報が残り、要件と矛盾する | 承認（2026-11-10） |
+| D5 | 他テーブルの論理削除 | `plan`・`plan_item`・`memo`・`routine` などの `is_deleted`・`deleted_at` も**廃止**し、削除は物理削除。監査が必要な `slot_evaluation`・`agent_session` は計画の削除に合わせて CASCADE | API に「削除済みを見る」機能がなく、論理削除の条件漏れによる不具合を避ける | 承認（2026-11-10） |
+| D6 | 作成者・更新者列 | `created_by_user_id`・`updated_by_user_id` は**廃止** | 本人以外が更新する経路がなく、常に `user_id` と同じになる | 承認（2026-11-10） |
+| D7 | 移動手段「バス」 | `transport_mode` の選択肢から**削除**（徒歩・自転車・車・電車の4種） | API 仕様（TransportMode）で「バス・タクシーは対象外」と決定済み | 承認（2026-11-10） |
+| D8 | 選択肢の値 | 日本語（'遅い' 等）ではなく、API と同じ英字コード（`slow`/`normal`/`fast` 等）で保存し、CHECK 制約を付ける | API 仕様の決定（2026-10-15）に合わせ、変換処理をなくす | 承認（2026-11-10） |
+| D9 | ルーティンの単発スキップ（U5） | `is_skipped` を廃止し、`skipped_date date`（スキップした日。日本時間）を追加。`skippedToday` は「`skipped_date` = 今日」で判定 | `is_skipped` では翌日に自動で解除できない | 承認（2026-11-10） |
+| D10 | 生成回数の保存先（U6） | 新しいテーブル `generation_quota`（利用者×日付ごとの回数）を追加（2.11） | 13秒打ち切り（502）は数えないなど、計画の件数とは一致しない。計画を物理削除しても回数が戻らないよう、計画とは別に持つ | 承認（2026-11-10） |
+| D11 | カレンダー連携のトークン | `access_token_secret_arn`・`refresh_token_secret_arn`・`token_expires_at`・`external_account_id` を廃止し、`secret_name` 1列に集約 | エンティティ定義の回答（2026-08-31）で決定済み | 承認（2026-11-10） |
 
 ## 2. 追加・変更するカラム
 
@@ -150,7 +150,7 @@ Web 版では出発検知を行わない（準備のみ）ため、テーブル�
 | calendar_event | `uq_calendar_event_integration_external (calendar_integration_id, external_event_id, event_date)` | 同じ予定の重複キャッシュを防ぐ |
 | point_program | `uq_point_program_user_id_program_code` | 上記 2.10 |
 
-## 4. 承認後の反映先
+## 4. 反映先
 
 - `docs/design/DB定義書.md`（PostgreSQL 版）
 - 詳細設計書の ER 図

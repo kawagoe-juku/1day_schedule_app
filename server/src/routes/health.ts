@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { DbChecker } from '../db.js';
+import type { DbChecker } from '../db/client.js';
 
 /**
  * ヘルスチェック（認証不要：config.public）。

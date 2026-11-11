@@ -31,6 +31,18 @@ export class AppError extends Error {
 /** 認証の失敗。理由（期限切れ・署名不正など）は利用者に返さない */
 export const unauthorized = () => new AppError(401, 'UNAUTHORIZED', '認証が必要です');
 
+/** 準備のみの機能（Feature Flag が OFF）。API 仕様の 501 FEATURE_DISABLED */
+export const featureDisabled = () =>
+  new AppError(501, 'FEATURE_DISABLED', 'この機能は現在ご利用いただけません');
+
+/** 外部サービス（Google Maps・乗換案内など）の失敗。API 仕様の 502 EXTERNAL_SERVICE_ERROR */
+export const externalServiceError = () =>
+  new AppError(
+    502,
+    'EXTERNAL_SERVICE_ERROR',
+    '外部サービスに接続できませんでした。時間をおいて再度お試しください',
+  );
+
 export interface ErrorBody {
   error: {
     code: ErrorCode;

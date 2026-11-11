@@ -9,6 +9,7 @@
 | `fix/<概要>` | 不具合修正 |
 
 - 作業は `main` からブランチを切り、プルリクエストで `main` に取り込む。
+- プルリクエストを作る・更新すると、Claude が自動でレビューし、指摘を該当行へのコメントとして付ける（`.github/workflows/claude-code-review.yml`。下書きの PR と、すでに Claude のコメントがある PR は対象外）。指摘は参考情報で、取り込むかどうかは人が判断する。
 - マージ前に `npm run lint`・`npm run typecheck`・`npm test`・`npm run api:check`・`npm run app:test` がすべて通っていること（自動デプロイの最初にも同じ確認を行い、失敗するとデプロイしない。手元でまとめて確かめるには `bash scripts/ci-build.sh`）。
 
 ## コミットメッセージ
@@ -53,7 +54,8 @@
 ## テスト
 
 - テストは各ワークスペースの `test/`（`server/test/`・`infra/test/`）に置き、ファイル名は `*.test.ts`。
-- 外部サービス（Bedrock・Google Maps・乗換案内・カレンダー）は単体テストではモックにする。
+- 外部サービス（Bedrock・Google Maps・乗換案内・カレンダー）は単体テストではモックにする。HTTP で呼ぶものは `server/test/helpers/fake-fetch.ts` の `createFakeFetch()` を、クライアントに `fetch` の代わりに渡す。
+- DB を使うテストは `server/test/db/` に置き、`useTestDb()`（`server/test/helpers/test-db.ts`）を使う。`npm run test:db` で動かす（`npm test` と自動デプロイには含めない）。
 - 不具合を直すときは、再現するテストを先に追加する。
 
 ## API 仕様の変更

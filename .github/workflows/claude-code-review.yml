@@ -1,0 +1,50 @@
+# プルリクエストを Claude が自動でレビューする（Claude Code GitHub Action）。
+#
+# 動かすための準備（リポジトリの管理者が1回だけ行う）：
+#   1. Claude GitHub App（https://github.com/apps/claude）をこのリポジトリに入れる
+#   2. 手元で `claude setup-token` を実行して長期トークンを発行し、
+#      リポジトリのシークレット CLAUDE_CODE_OAUTH_TOKEN に登録する
+#      （Settings → Secrets and variables → Actions。トークンはコードやチャットに貼らない）
+#
+# 動き：
+#   - 指摘は PR の該当行へのコメントとして付く。指摘が無ければまとめのコメントが1件付く
+#   - 下書き（Draft）・クローズ済み・すでに Claude のコメントがある PR はレビューしない
+#   - フォークからの PR ではシークレットが渡らないため動かない
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# 同じ PR に続けて push したときは、古いレビューを止めて新しいほうだけ動かす
+concurrency:
+  group: claude-code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # 下書きの間はランナーを起動しない
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      # Claude GitHub App として認証するために必要
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-plugins-official.git'
+          plugins: 'code-review@claude-plugins-official'
+          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # --allowedTools は、行へのコメントを付ける仕組みを起動するために必要（消さない）
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment"
+            --append-system-prompt "レビューのコメントは日本語で書く。"

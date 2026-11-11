@@ -1,0 +1,346 @@
+{
+  "items": [
+    {
+      "summary": {
+        "no": "1",
+        "start": { "type": "point", "coord": { "lat": 35.7295, "lon": 139.7109 }, "name": "start" },
+        "goal": { "type": "point", "coord": { "lat": 35.9064, "lon": 139.6239 }, "name": "goal" },
+        "move": {
+          "transit_count": 1,
+          "walk_distance": 501,
+          "fare": {
+            "unit_0": 440.0,
+            "unit_1": 0.0,
+            "unit_3": 1010.0,
+            "unit_48": 440.0,
+            "unit_51": 750.0,
+            "unit_128_train": 13120.0,
+            "unit_130_train": 37380.0,
+            "unit_133_train": 66970.0
+          },
+          "type": "move",
+          "from_time": "2026-10-27T09:00:00+09:00",
+          "to_time": "2026-10-27T09:42:00+09:00",
+          "time": 42,
+          "distance": 23101,
+          "move_type": ["local_train", "walk"],
+          "reference_fare": { "lowest_total_ticket": 440.0, "lowest_total_ic": 440.0 }
+        }
+      },
+      "sections": [
+        { "type": "point", "coord": { "lat": 35.7295, "lon": 139.7109 }, "name": "start" },
+        {
+          "type": "move",
+          "move": "walk",
+          "from_time": "2026-10-27T09:00:00+09:00",
+          "to_time": "2026-10-27T09:02:00+09:00",
+          "time": 2,
+          "distance": 232,
+          "line_name": "徒歩"
+        },
+        {
+          "type": "point",
+          "coord": { "lat": 35.729365, "lon": 139.710138 },
+          "name": "池袋",
+          "node_id": "00005947",
+          "node_types": ["station"],
+          "gateway": "メトロポリタン口",
+          "numbering": { "departure": [{ "symbol": "JA", "number": "12" }] }
+        },
+        {
+          "type": "move",
+          "next_transit": true,
+          "transport": {
+            "getoff": "前・中・後",
+            "color": "#00B48D",
+            "name": "ＪＲ埼京線",
+            "fare_season": "normal",
+            "company": { "id": "00000004", "name": "ＪＲ東日本" },
+            "links": [
+              {
+                "id": "00000139",
+                "name": "ＪＲ埼京線",
+                "direction": "down",
+                "destination": { "id": "00005564", "name": "大宮（埼玉県）" },
+                "from": { "id": "00005947", "name": "池袋" },
+                "to": { "id": "00005069", "name": "赤羽" },
+                "is_timetable": "false",
+                "way": "大宮（埼玉県）,川越"
+              }
+            ],
+            "id": "00000331",
+            "type": "普通",
+            "fare_break": {
+              "unit_0": false,
+              "unit_128": false,
+              "unit_130": false,
+              "unit_133": false,
+              "unit_136": false,
+              "unit_138": false,
+              "unit_141": false,
+              "unit_144": false,
+              "unit_146": false,
+              "unit_149": false,
+              "unit_152": false,
+              "unit_154": false,
+              "unit_157": false,
+              "unit_160": false,
+              "unit_162": false,
+              "unit_165": false,
+              "unit_48": false
+            }
+          },
+          "move": "local_train",
+          "from_time": "2026-10-27T09:06:00+09:00",
+          "to_time": "2026-10-27T09:14:00+09:00",
+          "time": 8,
+          "distance": 5500,
+          "line_name": "ＪＲ埼京線",
+          "transfer_seconds": 180
+        },
+        {
+          "type": "point",
+          "coord": { "lat": 35.778199, "lon": 139.720649 },
+          "name": "赤羽",
+          "node_id": "00005069",
+          "node_types": ["station"],
+          "numbering": {
+            "arrival": [{ "symbol": "JA", "number": "15" }],
+            "departure": [
+              { "symbol": "JU", "number": "04" },
+              { "symbol": "JS", "number": "22" }
+            ]
+          }
+        },
+        {
+          "type": "move",
+          "transport": {
+            "fare": {
+              "unit_0": 440.0,
+              "unit_1": 0.0,
+              "unit_128": 13120.0,
+              "unit_130": 37380.0,
+              "unit_133": 66970.0,
+              "unit_136": 8230.0,
+              "unit_138": 23490.0,
+              "unit_141": 44490.0,
+              "unit_144": 7400.0,
+              "unit_146": 21140.0,
+              "unit_149": 40040.0,
+              "unit_152": 5760.0,
+              "unit_154": 16440.0,
+              "unit_157": 31140.0,
+              "unit_160": 11150.0,
+              "unit_162": 31770.0,
+              "unit_165": 56920.0,
+              "unit_3": 1010.0,
+              "unit_48": 440.0,
+              "unit_51": 750.0
+            },
+            "getoff": "中・後",
+            "color": "#F68B1E",
+            "name": "ＪＲ高崎線",
+            "fare_season": "normal",
+            "company": { "id": "00000004", "name": "ＪＲ東日本" },
+            "links": [
+              {
+                "id": "00000188",
+                "name": "ＪＲ宇都宮線〔東北本線〕・ＪＲ上野東京ライン",
+                "direction": "down",
+                "destination": { "id": "00000522", "name": "宇都宮" },
+                "from": { "id": "00005069", "name": "赤羽" },
+                "to": { "id": "00005564", "name": "大宮（埼玉県）" },
+                "is_timetable": "false",
+                "way": "宇都宮,高崎"
+              }
+            ],
+            "id": "00000247",
+            "type": "普通",
+            "fare_break": {
+              "unit_0": true,
+              "unit_1": true,
+              "unit_128": true,
+              "unit_130": true,
+              "unit_133": true,
+              "unit_136": true,
+              "unit_138": true,
+              "unit_141": true,
+              "unit_144": true,
+              "unit_146": true,
+              "unit_149": true,
+              "unit_152": true,
+              "unit_154": true,
+              "unit_157": true,
+              "unit_160": true,
+              "unit_162": true,
+              "unit_165": true,
+              "unit_3": true,
+              "unit_48": true,
+              "unit_51": true
+            },
+            "fare_detail": [
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "0",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 440.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "48",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 440.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "128",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 13120.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "130",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 37380.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "133",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 66970.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "136",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 8230.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "138",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 23490.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "141",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 44490.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "144",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 7400.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "146",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 21140.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "149",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 40040.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "152",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 5760.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "154",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 16440.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "157",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 31140.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "160",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 11150.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "162",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 31770.0
+              },
+              {
+                "start": { "name": "池袋", "node_id": "00005947" },
+                "id": "165",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 56920.0
+              },
+              {
+                "start": { "name": "赤羽", "node_id": "00005069" },
+                "id": "1",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 0.0,
+                "default_extra_fare": true
+              },
+              {
+                "start": { "name": "赤羽", "node_id": "00005069" },
+                "id": "3",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 1010.0
+              },
+              {
+                "start": { "name": "赤羽", "node_id": "00005069" },
+                "id": "51",
+                "goal": { "name": "大宮（埼玉県）", "node_id": "00005564" },
+                "fare": 750.0
+              }
+            ]
+          },
+          "move": "local_train",
+          "from_time": "2026-10-27T09:23:00+09:00",
+          "to_time": "2026-10-27T09:37:00+09:00",
+          "time": 14,
+          "distance": 17100,
+          "line_name": "ＪＲ高崎線"
+        },
+        {
+          "type": "point",
+          "coord": { "lat": 35.906844, "lon": 139.624984 },
+          "name": "大宮（埼玉県）",
+          "node_id": "00005564",
+          "node_types": ["station"],
+          "gateway": "東口(北)",
+          "numbering": {
+            "arrival": [
+              { "symbol": "JU", "number": "07" },
+              { "symbol": "JS", "number": "24" }
+            ]
+          }
+        },
+        {
+          "type": "move",
+          "move": "walk",
+          "from_time": "2026-10-27T09:37:00+09:00",
+          "to_time": "2026-10-27T09:42:00+09:00",
+          "time": 5,
+          "distance": 269,
+          "line_name": "徒歩"
+        },
+        { "type": "point", "coord": { "lat": 35.9064, "lon": 139.6239 }, "name": "goal" }
+      ]
+    }
+  ],
+  "unit": {
+    "datum": "wgs84",
+    "coord_unit": "degree",
+    "distance": "metre",
+    "time": "minute",
+    "currency": "JPY"
+  }
+}

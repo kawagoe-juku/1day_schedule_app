@@ -1,4 +1,15 @@
 import { z } from 'zod';
+import { FEATURE_ENV_NAMES } from './features.js';
+
+/** Feature Flag の値。'true' のときだけ ON。'1' や 'on' などは設定ミスとして起動時にエラーにする */
+const flag = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((v) => v === 'true');
+const featureFlags = Object.fromEntries(FEATURE_ENV_NAMES.map((name) => [name, flag])) as Record<
+  (typeof FEATURE_ENV_NAMES)[number],
+  typeof flag
+>;
 
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -20,7 +31,14 @@ const ConfigSchema = z.object({
   /** JWT の検証先（ECS では App スタックが設定する。ローカルは .env に dev の値を書く） */
   COGNITO_USER_POOL_ID: z.string().optional(),
   COGNITO_WEB_CLIENT_ID: z.string().optional(),
+  /** 環境名（dev・stg・prod）。ECS では App スタックが設定する。メトリクスの区分に使う */
+  APP_STAGE: z.string().default('local'),
+  /** 外部 API のキー（ECS では Secrets Manager から入る。ローカルは必要なときだけ .env に書く） */
+  GOOGLE_MAPS_SERVER_KEY: z.string().min(1).optional(),
+  NAVITIME_RAPIDAPI_KEY: z.string().min(1).optional(),
   APP_VERSION: z.string().default('0.1.0'),
+  /** 準備のみの機能の Feature Flag（既定はすべて OFF。一覧は features.ts） */
+  ...featureFlags,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

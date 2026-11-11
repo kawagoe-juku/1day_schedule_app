@@ -6,8 +6,9 @@ import Fastify, {
 } from 'fastify';
 import { createCognitoVerifier, registerAuth, type TokenVerifier } from './auth.js';
 import type { Config } from './config.js';
-import type { DbChecker } from './db.js';
-import { AppError, errorBody, type ErrorCode } from './errors.js';
+import type { DbChecker } from './db/client.js';
+import { ExternalApiError } from './adapters/http.js';
+import { AppError, errorBody, externalServiceError, type ErrorCode } from './errors.js';
 import { healthRoutes } from './routes/health.js';
 import { sessionRoutes } from './routes/session.js';
 
@@ -81,7 +82,22 @@ export async function buildApp({
   });
 
   // Fastify 5 では error が unknown になるため、型引数で FastifyError を指定する
-  app.setErrorHandler<FastifyError | AppError>((error, request, reply) => {
+  app.setErrorHandler<FastifyError | AppError | ExternalApiError>((thrown, request, reply) => {
+    let error = thrown;
+    if (error instanceof ExternalApiError) {
+      // どの外部 API がどう失敗したかはログだけに残し、利用者には共通の文言を返す
+      request.log.warn(
+        {
+          service: error.service,
+          operation: error.operation,
+          kind: error.kind,
+          status: error.status,
+          detail: error.message,
+        },
+        'external api failed',
+      );
+      error = externalServiceError();
+    }
     if (error instanceof AppError) {
       return reply
         .code(error.statusCode)
