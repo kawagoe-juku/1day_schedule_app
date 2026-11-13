@@ -5,3 +5,5 @@ analyzer:
   exclude:
     - build/**
     - web/**
+    # 自動生成した API クライアント（npm run app:generate）
+    - lib/api/generated/**

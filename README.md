@@ -89,6 +89,7 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run app:setup` | Flutter（Web）環境のセットアップと動作確認（macOS、初回のみ） |
 | `npm run app:dev` | Webアプリを Chrome で起動 |
 | `npm run app:test` | Webアプリの静的解析とテスト |
+| `npm run app:generate` | Webアプリの API クライアントを `api/openapi.yaml` から作り直す |
 | `npm run app:build` | Webアプリをビルド（`app/build/web`） |
 
 ## Feature Flag

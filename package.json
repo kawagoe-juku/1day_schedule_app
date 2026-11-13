@@ -28,7 +28,9 @@
     "app:setup": "bash scripts/setup-flutter-mac.sh",
     "app:dev": "cd app && flutter run -d chrome",
     "app:test": "cd app && flutter analyze && flutter test",
-    "app:build": "cd app && flutter build web",
+    "app:generate": "node scripts/openapi-for-dart.mjs api/openapi.yaml app/.dart_tool/openapi-for-dart.json && cd app && dart run swagger_parser",
+    "app:generate:check": "node scripts/openapi-for-dart.mjs api/openapi.yaml app/.dart_tool/openapi-for-dart.json && cd app && dart run swagger_parser --check",
+    "app:build": "cd app && flutter build web --dart-define=APP_ENV=${APP_ENV:-local}",
     "tools:setup": "bash scripts/setup-tools-mac.sh",
     "aws:check": "bash scripts/aws-check.sh",
     "dev:token": "node scripts/dev-token.mjs"

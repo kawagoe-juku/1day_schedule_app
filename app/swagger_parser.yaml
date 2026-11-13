@@ -1,0 +1,12 @@
+# API クライアントの生成設定（npm run app:generate）。
+# api/openapi.yaml を scripts/openapi-for-dart.mjs で生成向けに整えたものから、
+# lib/api/generated/ を作る。生成物は手で編集しない。
+swagger_parser:
+  schema_path: .dart_tool/openapi-for-dart.json
+  output_directory: lib/api/generated
+  generation:
+    root_api_class_name: Api
+    # Dio を直接使う（retrofit を使わないので build_runner が要らない）
+    http_client: dio
+    # シリアライザのパッケージを使わず、素の Dart で JSON を変換する
+    serializer: plain
