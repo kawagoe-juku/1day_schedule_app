@@ -18,6 +18,8 @@ export interface TokenVerifier {
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthUser;
+    /** 検証を通ったアクセストークン。Cognito への問い合わせ（メールアドレスの取得）にだけ使い、ログに出さない */
+    accessToken?: string;
   }
   interface FastifyContextConfig {
     /** true のルートは認証しない（ヘルスチェック・OAuth のコールバック） */
@@ -70,6 +72,7 @@ export function registerAuth(app: FastifyInstance, verifier: TokenVerifier | und
     }
     try {
       request.user = await verifier.verify(token);
+      request.accessToken = token;
     } catch (err) {
       // aws-jwt-verify の例外はクラス名で種類が分かる（name は設定されないことがある）
       const reason = err instanceof Error ? err.constructor.name : 'unknown';

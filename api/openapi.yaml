@@ -7,7 +7,7 @@ info:
     `/agent/*`（AI連携基盤）を提供する。
 
     ## 共通ルール
-    - 認証：ヘルスチェックとOAuthコールバックを除き、全APIで `Authorization: Bearer <JWT>`（Cognito発行）が必須。
+    - 認証：ヘルスチェック・`GET /api/config`・OAuthコールバックを除き、全APIで `Authorization: Bearer <JWT>`（Cognito発行）が必須。
       ユーザーはJWTの `sub` で識別し、リクエストでユーザーIDは受け取らない。
     - 日時：ISO 8601・日本時間（例 `2026-11-02T13:00:00+09:00`）。時刻のみの項目は `HH:mm`（24時間制）。
     - エラー：すべて `Error` 形式で返す。
@@ -24,7 +24,8 @@ info:
     ## 要件定義からの差分
     - Web版のため `POST/DELETE /api/push-subscriptions` は定義しない。
     - 画面表示に必要なため次を追加：`GET /api/integrations`（連携状態の一覧）、
-      `GET /api/integrations/{provider}/callback`（OAuthコールバック）、ヘルスチェック2本。
+      `GET /api/integrations/{provider}/callback`（OAuthコールバック）、ヘルスチェック2本、
+      `GET /api/config`（画面がログイン前に取得する Cognito の接続先）。
     - ログイン状態の確認のため `GET /api/session`（トークンの利用者と有効期限）を追加。DB を使わない。
     - ログイン失敗によるアカウントロック：要件は「なし」だが、Cognito 標準の連続失敗時の一時停止
       （数秒〜数分で自動解除）は無効にできないため受け入れる。
@@ -88,6 +89,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Readiness'
+  /api/config:
+    get:
+      tags: [account]
+      operationId: getAppConfig
+      summary: 画面の起動に必要な設定（ログイン先の Cognito）を返す
+      description: |
+        画面はログイン前にこれを取得し、Cognito の接続先を決める。秘密の値は含まない
+        （User Pool ID と Web 用クライアント ID は、ブラウザに渡す前提の公開情報）。
+      security: []
+      responses:
+        '200':
+          description: 設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientConfig'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/session:
     get:
       tags: [account]
@@ -1024,6 +1043,21 @@ components:
           type: string
           format: date-time
           description: アクセストークンの有効期限
+    ClientConfig:
+      type: object
+      required: [cognito]
+      properties:
+        cognito:
+          type: object
+          required: [region, userPoolId, webClientId]
+          properties:
+            region:
+              type: string
+              examples: ['ap-northeast-1']
+            userPoolId:
+              type: string
+            webClientId:
+              type: string
     Readiness:
       type: object
       required: [status, checks]

@@ -1,6 +1,10 @@
+import { createCognitoUserClient } from './adapters/cognito.js';
+import { createExternalClients } from './adapters/index.js';
+import { createEmfMetrics } from './adapters/metrics.js';
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { createDb } from './db/client.js';
+import { userRepository } from './db/repositories/user-repository.js';
 
 // server/.env があれば読み込む（本番は ECS の環境変数・Secrets Manager を使う）
 try {
@@ -17,7 +21,18 @@ const db = config.DATABASE_URL
       onError: (err) => app.log.warn({ err }, 'db connection failed'),
     })
   : undefined;
-const app = await buildApp({ config, db });
+const app = await buildApp({
+  config,
+  db,
+  users: db ? userRepository(db.db) : undefined,
+  external: createExternalClients(config),
+  cognito: config.COGNITO_USER_POOL_ID
+    ? createCognitoUserClient({
+        userPoolId: config.COGNITO_USER_POOL_ID,
+        metrics: createEmfMetrics({ stage: config.APP_STAGE }),
+      })
+    : undefined,
+});
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {

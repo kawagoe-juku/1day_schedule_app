@@ -9,7 +9,11 @@ import type { Config } from './config.js';
 import type { DbChecker } from './db/client.js';
 import { ExternalApiError } from './adapters/http.js';
 import { AppError, errorBody, externalServiceError, type ErrorCode } from './errors.js';
+import type { CognitoUserClient } from './adapters/cognito.js';
+import type { ExternalClients } from './adapters/index.js';
+import { geoRoutes } from './routes/geo.js';
 import { healthRoutes } from './routes/health.js';
+import { profileRoutes, type ProfileStore } from './routes/profile.js';
 import { sessionRoutes } from './routes/session.js';
 
 /** クライアント指定の x-request-id は、ログ・応答ヘッダーに安全な形式のみ受け付ける */
@@ -60,6 +64,12 @@ export interface BuildAppOptions {
   db?: DbChecker;
   /** テスト用。指定しない場合は config の Cognito の設定から作る */
   verifier?: TokenVerifier;
+  /** プロファイルの保存先（userRepository）。DB が未設定なら渡さない */
+  users?: ProfileStore;
+  /** 外部 API クライアント（Google Maps・乗換案内）。キーが未設定のものは undefined */
+  external?: ExternalClients;
+  /** Cognito から利用者の情報を取得するクライアント。Cognito が未設定なら渡さない */
+  cognito?: CognitoUserClient;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -67,6 +77,9 @@ export async function buildApp({
   config,
   db,
   verifier,
+  users,
+  external = {},
+  cognito,
   logger,
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
@@ -143,8 +156,17 @@ export async function buildApp({
   );
 
   // /api（APIサービス）と /agent（AI連携基盤）のルートを登録する（認証は registerAuth が既定で掛ける）
-  await app.register(healthRoutes, { version: config.APP_VERSION, db });
+  await app.register(healthRoutes, {
+    version: config.APP_VERSION,
+    db,
+    cognito:
+      config.COGNITO_USER_POOL_ID && config.COGNITO_WEB_CLIENT_ID
+        ? { userPoolId: config.COGNITO_USER_POOL_ID, webClientId: config.COGNITO_WEB_CLIENT_ID }
+        : undefined,
+  });
   await app.register(sessionRoutes);
+  await app.register(profileRoutes, { users, cognito, googleMaps: external.googleMaps });
+  await app.register(geoRoutes, { googleMaps: external.googleMaps, navitime: external.navitime });
 
   return app;
 }

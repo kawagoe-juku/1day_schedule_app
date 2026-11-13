@@ -36,9 +36,11 @@ const updatedAt = () =>
     .$onUpdate(() => new Date());
 
 export interface FrequentlyUsedStation {
-  stationCode: string;
+  /** 乗換案内 API の駅コード（候補から選ばずに入力した駅には無い） */
+  stationCode?: string;
   stationName: string;
-  label: string;
+  /** 自宅・勤務先などのラベル（付けなければ無い） */
+  label?: string;
 }
 
 export interface RouteDetail {
