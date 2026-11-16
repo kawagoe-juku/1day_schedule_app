@@ -21,6 +21,8 @@ class ProfileClient {
   /// プロファイルを取得する
   ///
   /// 初回ログイン時（プロファイル未作成）は `onboardingCompleted=false` の初期値を返す。
+  /// メールアドレスは Cognito から取得する。Cognito に接続できなければ 502、
+  /// トークンが失効していれば（全端末ログアウト・退会の後など）401 を返す。
   Future<models.Profile> getProfile({
     Map<String, Object?> extra = const {
       "openapi.servers": [

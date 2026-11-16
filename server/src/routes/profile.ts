@@ -27,16 +27,27 @@ export interface ProfileRouteOptions {
 
 export const MAX_FREQUENT_STATIONS = 20;
 
+const isControlCharacter = (char: string) => {
+  const code = char.charCodeAt(0);
+  return code <= 0x1f || code === 0x7f;
+};
+
+/** 制御文字（NUL など。PostgreSQL が受け付けず、保存時に失敗する）を含まない文字列 */
+const text = () =>
+  z.string().refine((value) => ![...value].some(isControlCharacter), {
+    message: '使用できない文字が含まれています',
+  });
+
 const FrequentStation = z.strictObject({
-  stationCode: z.string().min(1).max(50).optional(),
-  stationName: z.string().min(1).max(100),
-  label: z.string().max(50).optional(),
+  stationCode: text().trim().min(1).max(50).optional(),
+  stationName: text().trim().min(1).max(100),
+  label: text().trim().min(1).max(50).optional(),
 });
 
 /** API 仕様（api/openapi.yaml）の ProfileUpdate。知らない項目は受け付けない */
 const ProfileUpdate = z.strictObject({
-  homeAddress: z.string().trim().min(1).max(255).optional(),
-  homePlaceId: z.string().min(1).max(512).optional(),
+  homeAddress: text().trim().min(1).max(255).optional(),
+  homePlaceId: text().min(1).max(512).optional(),
   frequentStations: z.array(FrequentStation).max(MAX_FREQUENT_STATIONS).optional(),
   walkingSpeed: z.enum(['slow', 'normal', 'fast']).optional(),
   preparationTimeMinutes: z.number().int().min(0).max(180).optional(),

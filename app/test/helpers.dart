@@ -2,6 +2,8 @@ import 'package:ai_schedule_app/api/api_client.dart';
 import 'package:ai_schedule_app/app.dart';
 import 'package:ai_schedule_app/auth/session_controller.dart';
 import 'package:ai_schedule_app/config/app_config.dart';
+import 'package:ai_schedule_app/routing/app_router.dart';
+import 'package:ai_schedule_app/widgets/app_frame.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,6 +28,9 @@ class TestEnvironment {
 
   /// true の間、`GET /api/config` を失敗させる
   bool configUnavailable = false;
+
+  /// `GET /api/profile` を、このステータスの失敗にする（401：トークンの失効、500：サーバの障害）
+  int? profileFailureStatus;
 
   late final FakeHttpAdapter server = FakeHttpAdapter(_respond);
 
@@ -52,6 +57,15 @@ class TestEnvironment {
               'code': 'UNAUTHORIZED',
               'message': '認証が必要です',
               'requestId': 'req-1',
+            },
+          });
+        }
+        if (profileFailureStatus case final status?) {
+          return FakeHttpAdapter.jsonResponse(status, {
+            'error': {
+              'code': status == 401 ? 'UNAUTHORIZED' : 'INTERNAL_ERROR',
+              'message': 'テスト用の失敗',
+              'requestId': 'req-2',
             },
           });
         }
@@ -84,6 +98,9 @@ Future<TestEnvironment> pumpApp(
   WidgetTester tester, {
   double width = 390,
   TestEnvironment? env,
+
+  /// 起動時に開く場所（ブラウザでその URL を開いた・再読み込みした、という状況）
+  String initialLocation = '/',
 }) async {
   final environment = env ?? (TestEnvironment()..addUser(signedIn: true));
   tester.view.physicalSize = Size(width, 844);
@@ -96,10 +113,14 @@ Future<TestEnvironment> pumpApp(
         authServiceProvider.overrideWithValue(environment.auth),
         activityStoreProvider.overrideWithValue(environment.activity),
         clockProvider.overrideWithValue(() => environment.now),
+        initialLocationProvider.overrideWithValue(initialLocation),
         apiDioProvider.overrideWith(
           (ref) => createApiDio(
             config: const AppConfig(env: AppEnv.local, apiBaseUrl: ''),
             getAccessToken: ref.watch(accessTokenGetterProvider),
+            onUnauthorized: () => ref
+                .read(sessionControllerProvider.notifier)
+                .handleUnauthorized(),
             httpClientAdapter: environment.server,
           ),
         ),
@@ -138,3 +159,16 @@ Future<void> tapKey(WidgetTester tester, String key) async {
   await tester.tap(find.byKey(Key(key)));
   await tester.pumpAndSettle();
 }
+
+/// 起動中のアプリの中身（状態・API クライアントなど）を取り出す。
+ProviderContainer containerOf(WidgetTester tester) =>
+    ProviderScope.containerOf(tester.element(find.byType(AppFrame)));
+
+/// いま開いている場所（ブラウザのアドレス欄にあたる）。
+String currentLocation(WidgetTester tester) =>
+    containerOf(tester)
+        .read(routerProvider)
+        .routerDelegate
+        .currentConfiguration
+        .uri
+        .toString();

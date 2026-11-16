@@ -127,12 +127,19 @@ class SessionController extends Notifier<SessionState> {
 
   /// ログイン済みの利用者のプロファイルを確かめ、ログイン中の状態にする。
   Future<void> _enter() async {
-    await _activity.write(_now());
     try {
+      await _activity.write(_now());
+      // 先にトークンを確かめる。期限切れなら、API を呼ぶ前にログアウトにする。
+      // 一時的に更新できないだけなら AuthFailure になり、下でやり直せる状態にする
+      if (await _auth.getAccessToken() == null) {
+        await signOut();
+        return;
+      }
       final profile = await ref.read(apiProvider).profile.getProfile();
       state = SessionSignedIn(onboardingCompleted: profile.onboardingCompleted);
     } on Object catch (error) {
-      if (ApiException.from(error).kind == ApiErrorKind.unauthorized) {
+      if (error is! AuthFailure &&
+          ApiException.from(error).kind == ApiErrorKind.unauthorized) {
         // ログイン情報が無効になっている（全端末ログアウト・退会など）
         await signOut();
       } else {
@@ -160,16 +167,6 @@ class SessionController extends Notifier<SessionState> {
     return outcome;
   }
 
-  /// 確認コードでアカウントを有効にし、そのままサインインする。
-  Future<void> confirmSignUpAndSignIn({
-    required String email,
-    required String password,
-    required String code,
-  }) async {
-    await _auth.confirmSignUp(email: email, code: code);
-    await signIn(email: email, password: password);
-  }
-
   Future<void> signOut() async {
     try {
       await _auth.signOut();
@@ -187,15 +184,32 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
-  /// API に付けるアクセストークン。無操作の時間が上限を超えていたら、ログアウトして null を返す。
+  /// API が 401 を返したときに呼ぶ。ログインが無効になっている（期限切れ・ほかの端末での
+  /// ログアウト・退会など）ので、この端末もログアウトしてログイン画面へ戻す。
+  Future<void> handleUnauthorized() async {
+    if (state is SessionSignedIn) await signOut();
+  }
+
+  /// API に付けるアクセストークン。
+  ///
+  /// 無操作の時間が上限を超えていたとき、またはログインの有効期限が切れていたときは、
+  /// ログアウトして null を返す。一時的な理由でトークンを更新できなかったときは
+  /// [AuthFailure] を投げる（ログアウトはしない）。
   Future<String?> getAccessToken() async {
-    if (state is! SessionSignedIn && state is! SessionLoading) return null;
+    final signedIn = state is SessionSignedIn;
+    if (!signedIn && state is! SessionLoading) return null;
     if (await _isIdleTooLong()) {
       await signOut();
       return null;
     }
     final token = await _auth.getAccessToken();
-    if (token != null) await _activity.write(_now());
+    if (token == null) {
+      // ログイン中のはずなのにトークンが無い＝ログインの有効期限が切れた
+      if (signedIn) await signOut();
+      return null;
+    }
+    // ログアウトの処理と重なったときに、消した記録を書き戻さない
+    if (state is! SessionSignedOut) await _activity.write(_now());
     return token;
   }
 }

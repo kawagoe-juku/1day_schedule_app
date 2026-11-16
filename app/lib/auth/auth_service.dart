@@ -15,6 +15,9 @@ enum AuthFailureKind {
   /// 確認コードの有効期限が切れた
   codeExpired,
 
+  /// 管理者がパスワードをリセットした。パスワードリセットをしてからでないとログインできない
+  passwordResetRequired,
+
   /// 短時間に試しすぎた
   tooManyAttempts,
 
@@ -38,6 +41,8 @@ class AuthFailure implements Exception {
     AuthFailureKind.invalidPassword => passwordPolicyMessage,
     AuthFailureKind.codeMismatch => '確認コードが正しくありません',
     AuthFailureKind.codeExpired => '確認コードの有効期限が切れています。コードを再送してください',
+    AuthFailureKind.passwordResetRequired =>
+      'パスワードの再設定が必要です。「パスワードを忘れた場合」から設定し直してください',
     AuthFailureKind.tooManyAttempts => '試行回数が多すぎます。しばらくしてから、もう一度お試しください',
     AuthFailureKind.network => '通信できませんでした。接続を確認して、もう一度お試しください',
     AuthFailureKind.unknown => 'エラーが発生しました。しばらくしてから、もう一度お試しください',
@@ -82,7 +87,11 @@ abstract interface class AuthService {
   /// ログイン中か（ブラウザに残っているログイン情報を含む）。
   Future<bool> isSignedIn();
 
-  /// API に付けるアクセストークン（JWT）。期限が近ければ自動で更新する。未ログインなら null。
+  /// API に付けるアクセストークン（JWT）。期限が近ければ自動で更新する。
+  ///
+  /// - 未ログイン、またはログインの有効期限が切れている（更新もできない）なら null
+  /// - 通信できないなどの一時的な理由で更新できなかったときは [AuthFailure] を投げる
+  ///   （ログインは切れていないので、呼び出し側はログアウトさせない）
   Future<String?> getAccessToken();
 
   /// サインアップする。成功すると、確認コードがメールで届く。

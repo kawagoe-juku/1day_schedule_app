@@ -146,11 +146,21 @@ class _AuthTabsState extends ConsumerState<_AuthTabs> {
 
     await _run(() async {
       if (_awaitingCode) {
-        await session.confirmSignUpAndSignIn(
-          email: email,
-          password: password,
-          code: _code.text.trim(),
-        );
+        await auth.confirmSignUp(email: email, code: _code.text.trim());
+        try {
+          await session.signIn(email: email, password: password);
+        } on AuthFailure catch (failure) {
+          // 確認は済んだので、コードの入力には戻さない。サインインからやり直せるようにする
+          if (!mounted) return;
+          setState(() {
+            _mode = _AuthMode.signIn;
+            _awaitingCode = false;
+            _code.clear();
+            _clearMessages();
+            _notice = 'メールアドレスの確認が完了しました。サインインしてください';
+            _passwordError = failure.message;
+          });
+        }
       } else if (_mode == _AuthMode.signUp) {
         await auth.signUp(email: email, password: password);
         if (!mounted) return;

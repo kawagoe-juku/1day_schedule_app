@@ -8,10 +8,17 @@ import { createCognitoVerifier, registerAuth, type TokenVerifier } from './auth.
 import type { Config } from './config.js';
 import type { DbChecker } from './db/client.js';
 import { ExternalApiError } from './adapters/http.js';
-import { AppError, errorBody, externalServiceError, type ErrorCode } from './errors.js';
-import type { CognitoUserClient } from './adapters/cognito.js';
+import {
+  AppError,
+  errorBody,
+  externalServiceError,
+  unauthorized,
+  type ErrorCode,
+} from './errors.js';
+import { CognitoTokenRejectedError, type CognitoUserClient } from './adapters/cognito.js';
 import type { ExternalClients } from './adapters/index.js';
 import { geoRoutes } from './routes/geo.js';
+import { RateLimitedError } from './rate-limit.js';
 import { healthRoutes } from './routes/health.js';
 import { profileRoutes, type ProfileStore } from './routes/profile.js';
 import { sessionRoutes } from './routes/session.js';
@@ -42,6 +49,27 @@ function toField(instancePath: string, params: Record<string, unknown> | undefin
   const missing = params?.missingProperty;
   if (typeof missing === 'string') return path ? `${path}.${missing}` : missing;
   return path;
+}
+
+/**
+ * 想定外の例外を、ログに出してよい形にする。
+ * DB の失敗（Drizzle の例外）は、メッセージに SQL へ渡した値（住所・座標など）が入るため、
+ * そのままは出さない。SQL の文（値は $1 などの記号）と、PostgreSQL のエラーコードだけを残す。
+ */
+export function toLoggableError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error && 'query' in error && 'params' in error) {
+    const cause: unknown = error.cause;
+    return {
+      dbError: {
+        type: error.name,
+        query: typeof error.query === 'string' ? error.query : undefined,
+        // 23505（一意制約）などのコード。メッセージと detail には値が入り得るので出さない
+        code: cause instanceof Error && 'code' in cause ? cause.code : undefined,
+        causeType: cause instanceof Error ? cause.name : undefined,
+      },
+    };
+  }
+  return { err: error };
 }
 
 /**
@@ -111,6 +139,13 @@ export async function buildApp({
       );
       error = externalServiceError();
     }
+    if (error instanceof CognitoTokenRejectedError) {
+      request.log.info({ reason: 'token rejected by cognito' }, 'unauthorized');
+      error = unauthorized();
+    }
+    if (error instanceof RateLimitedError) {
+      void reply.header('retry-after', error.retryAfterSeconds);
+    }
     if (error instanceof AppError) {
       return reply
         .code(error.statusCode)
@@ -131,7 +166,7 @@ export async function buildApp({
       request.log.info({ statusCode: status, code: error.code }, 'client error');
       return reply.code(status).send(errorBody(code, message, request.id));
     }
-    request.log.error({ err: error }, 'unhandled error');
+    request.log.error(toLoggableError(error), 'unhandled error');
     return reply
       .code(500)
       .send(

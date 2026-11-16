@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'auth_service.dart';
 
@@ -49,8 +50,15 @@ class AmplifyAuthService implements AuthService {
   Future<String?> getAccessToken() => _guard(() async {
     // 期限が近いトークンは、ここでリフレッシュトークンを使って更新される
     final session = await _cognito.fetchAuthSession();
-    if (!session.isSignedIn) return null;
-    return session.userPoolTokensResult.valueOrNull?.accessToken.raw;
+    try {
+      return session.userPoolTokensResult.value.accessToken.raw;
+    } on SignedOutException {
+      return null;
+    } on SessionExpiredException {
+      // リフレッシュトークンの期限切れ・取り消し。Amplify が端末のログイン情報を消している
+      return null;
+    }
+    // それ以外（通信できない・Cognito の一時的な失敗）は _guard が AuthFailure にする
   });
 
   @override
@@ -93,6 +101,10 @@ class AmplifyAuthService implements AuthService {
       if (result.nextStep.signInStep == AuthSignInStep.confirmSignUp) {
         return SignInOutcome.confirmationRequired;
       }
+      if (result.nextStep.signInStep == AuthSignInStep.resetPassword) {
+        // 管理者がパスワードをリセットした利用者
+        throw const AuthFailure(AuthFailureKind.passwordResetRequired);
+      }
       // 多要素認証などは使わない設定なので、ここには来ない
       throw const AuthFailure(AuthFailureKind.unknown);
     } on UserNotConfirmedException {
@@ -132,11 +144,13 @@ Future<T> _guard<T>(Future<T> Function() action) async {
   } on AuthFailure {
     rethrow;
   } on Object catch (error) {
-    throw AuthFailure(_kindOf(error));
+    throw AuthFailure(authFailureKindOf(error));
   }
 }
 
-AuthFailureKind _kindOf(Object error) => switch (error) {
+/// Amplify の例外が、どの種類の失敗にあたるか。
+@visibleForTesting
+AuthFailureKind authFailureKindOf(Object error) => switch (error) {
   // 未登録のメールアドレスも、Cognito の設定（存在を教えない）によりここに来る
   AuthNotAuthorizedException() ||
   UserNotFoundException() => AuthFailureKind.invalidCredentials,

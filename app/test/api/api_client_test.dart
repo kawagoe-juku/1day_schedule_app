@@ -1,6 +1,8 @@
 import 'package:ai_schedule_app/api/api_client.dart';
 import 'package:ai_schedule_app/api/api_exception.dart';
 import 'package:ai_schedule_app/api/generated/api.dart';
+import 'package:ai_schedule_app/api/json_nulls.dart';
+import 'package:ai_schedule_app/auth/auth_service.dart';
 import 'package:ai_schedule_app/config/app_config.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -101,6 +103,26 @@ void main() {
     expect(profile.walkingSpeed, WalkingSpeed.normal);
   });
 
+  test('入れ子と配列の中のオブジェクトの null も取り除く（配列の要素の null は残す）', () {
+    expect(
+      removeJsonNulls({
+        'a': null,
+        'b': {'c': null, 'd': 1},
+        'list': [
+          {'e': null, 'f': 'x'},
+          null,
+        ],
+      }),
+      {
+        'b': {'d': 1},
+        'list': [
+          {'f': 'x'},
+          null,
+        ],
+      },
+    );
+  });
+
   group('失敗の変換', () {
     test('入力エラー（400）は項目ごとの内容を取り出す', () async {
       final adapter = FakeHttpAdapter.json(
@@ -165,6 +187,83 @@ void main() {
       expect(error.kind, ApiErrorKind.server);
       expect(error.message, ApiException.unexpectedMessage);
       expect(error.statusCode, 502);
+    });
+
+    test('知らないエラーコードでも、ステータスから種類を決め、メッセージと項目別の内容は読む', () async {
+      final adapter = FakeHttpAdapter.json(409, {
+        'error': {
+          'code': 'SOME_NEW_CODE',
+          'message': 'サーバのメッセージ',
+          'requestId': 'req-9',
+          'details': [
+            {'field': 'memo', 'message': '項目のメッセージ'},
+            {'message': 'field のない要素は読み飛ばす'},
+          ],
+        },
+      });
+
+      final error = await _failure(() => _api(adapter).profile.getProfile());
+
+      expect(error.kind, ApiErrorKind.conflict);
+      expect(error.message, 'サーバのメッセージ');
+      expect(error.requestId, 'req-9');
+      expect(error.fieldErrors, {'memo': '項目のメッセージ'});
+    });
+
+    const statuses = {
+      400: ApiErrorKind.validation,
+      401: ApiErrorKind.unauthorized,
+      404: ApiErrorKind.notFound,
+      409: ApiErrorKind.conflict,
+      429: ApiErrorKind.rateLimited,
+      501: ApiErrorKind.featureDisabled,
+      502: ApiErrorKind.server,
+      503: ApiErrorKind.server,
+    };
+    for (final MapEntry(key: status, value: kind) in statuses.entries) {
+      test('本文のない $status（WAF・CloudFront など）は ${kind.name} になる', () async {
+        final adapter = FakeHttpAdapter.json(status, null);
+
+        final error = await _failure(() => _api(adapter).profile.getProfile());
+
+        expect(error.kind, kind);
+        expect(error.message, ApiException.unexpectedMessage);
+      });
+    }
+
+    test('認証が必要な API の 401 では onUnauthorized を呼ぶ（不要な API では呼ばない）', () async {
+      var called = 0;
+      final adapter = FakeHttpAdapter.json(401, _errorBody('UNAUTHORIZED'));
+      final api = Api(
+        createApiDio(
+          config: _config,
+          getAccessToken: () async => 'test-token',
+          onUnauthorized: () async => called++,
+          httpClientAdapter: adapter,
+        ),
+      );
+
+      await _failure(api.health.getHealth);
+      expect(called, 0);
+      await _failure(api.profile.getProfile);
+      expect(called, 1);
+    });
+
+    test('トークンの取得が失敗したら、送らずに network として扱う', () async {
+      final adapter = FakeHttpAdapter.json(200, <String, Object?>{});
+      final api = Api(
+        createApiDio(
+          config: _config,
+          getAccessToken: () async =>
+              throw const AuthFailure(AuthFailureKind.network),
+          httpClientAdapter: adapter,
+        ),
+      );
+
+      final error = await _failure(api.profile.getProfile);
+
+      expect(error.kind, ApiErrorKind.network);
+      expect(adapter.requests, isEmpty);
     });
 
     test('サーバに届かないときは network になる', () async {

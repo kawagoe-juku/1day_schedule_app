@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 
 import 'generated/api.dart';
-import 'json_nulls.dart';
 
 /// API 呼び出しの失敗の種類。
 enum ApiErrorKind {
@@ -97,23 +96,13 @@ class ApiException implements Exception {
 
     final statusCode = response.statusCode;
     final body = _parseErrorBody(response.data);
-    if (body == null) {
-      return ApiException(
-        kind: _kindFromStatus(statusCode),
-        message: unexpectedMessage,
-        statusCode: statusCode,
-      );
-    }
     return ApiException(
-      kind: _kindFromCode(body.code),
-      message: body.message,
+      // サーバが返したコードを優先し、読めなければ HTTP のステータスから決める
+      kind: body?.kind ?? _kindFromStatus(statusCode),
+      message: body?.message ?? unexpectedMessage,
       statusCode: statusCode,
-      requestId: body.requestId,
-      fieldErrors: {
-        // 同じ項目に複数あるときは、最初の1件を出す
-        for (final detail in (body.details ?? const []).reversed)
-          detail.field: detail.message,
-      },
+      requestId: body?.requestId,
+      fieldErrors: body?.fieldErrors ?? const {},
     );
   }
 
@@ -140,32 +129,69 @@ class ApiException implements Exception {
       'ApiException(${kind.name}, status: $statusCode, requestId: $requestId)';
 }
 
-ApiErrorError? _parseErrorBody(Object? data) {
-  if (data is! Map<String, Object?>) return null;
-  try {
-    return ApiError.fromJson(removeJsonNulls(data) as Map<String, Object?>)
-        .error;
-  } on Object {
-    // 共通エラー形式ではない応答（CloudFront や ALB が返したエラーページなど）
-    return null;
-  }
+/// サーバの共通エラー形式（`{ error: { code, message, details, requestId } }`）から読めた内容。
+typedef _ErrorBody = ({
+  ApiErrorKind? kind,
+  String? message,
+  String? requestId,
+  Map<String, String> fieldErrors,
+});
+
+/// 共通エラー形式を、読める範囲で読む。形式が違えば null。
+///
+/// 生成した型（`ApiError.fromJson`）は、知らないコードや欠けた項目が1つでもあると全体を
+/// 読めなくなる。古い画面が新しいサーバの応答を受け取っても、メッセージは出せるように、
+/// ここでは項目ごとに読む。
+_ErrorBody? _parseErrorBody(Object? data) {
+  if (data is! Map) return null;
+  final error = data['error'];
+  if (error is! Map) return null;
+
+  final code = error['code'];
+  final message = error['message'];
+  final requestId = error['requestId'];
+  final details = error['details'];
+  return (
+    kind: _kindFromCode(code),
+    message: message is String && message.isNotEmpty ? message : null,
+    requestId: requestId is String ? requestId : null,
+    fieldErrors: {
+      if (details is List)
+        // 同じ項目に複数あるときは、最初の1件を出す
+        for (final detail in details.reversed)
+          if (detail is Map &&
+              detail['field'] is String &&
+              detail['message'] is String)
+            detail['field'] as String: detail['message'] as String,
+    },
+  );
 }
 
-ApiErrorKind _kindFromCode(ApiErrorErrorCode code) => switch (code) {
-  ApiErrorErrorCode.validationError => ApiErrorKind.validation,
-  ApiErrorErrorCode.unauthorized => ApiErrorKind.unauthorized,
-  // FORBIDDEN は予約（サーバは返さない）。返ってきたら「対象がない」と同じ扱いにする
-  ApiErrorErrorCode.forbidden => ApiErrorKind.notFound,
-  ApiErrorErrorCode.notFound => ApiErrorKind.notFound,
-  ApiErrorErrorCode.conflict => ApiErrorKind.conflict,
-  ApiErrorErrorCode.rateLimited => ApiErrorKind.rateLimited,
-  ApiErrorErrorCode.externalServiceError => ApiErrorKind.externalService,
-  ApiErrorErrorCode.featureDisabled => ApiErrorKind.featureDisabled,
-  ApiErrorErrorCode.internalError => ApiErrorKind.server,
-};
+/// サーバのエラーコードから種類を決める。知らないコードなら null。
+ApiErrorKind? _kindFromCode(Object? code) {
+  final known = ApiErrorErrorCode.values.where((item) => item.value == code);
+  if (known.isEmpty) return null;
+  return switch (known.first) {
+    ApiErrorErrorCode.validationError => ApiErrorKind.validation,
+    ApiErrorErrorCode.unauthorized => ApiErrorKind.unauthorized,
+    // FORBIDDEN は予約（サーバは返さない）。返ってきたら「対象がない」と同じ扱いにする
+    ApiErrorErrorCode.forbidden => ApiErrorKind.notFound,
+    ApiErrorErrorCode.notFound => ApiErrorKind.notFound,
+    ApiErrorErrorCode.conflict => ApiErrorKind.conflict,
+    ApiErrorErrorCode.rateLimited => ApiErrorKind.rateLimited,
+    ApiErrorErrorCode.externalServiceError => ApiErrorKind.externalService,
+    ApiErrorErrorCode.featureDisabled => ApiErrorKind.featureDisabled,
+    ApiErrorErrorCode.internalError => ApiErrorKind.server,
+  };
+}
 
 ApiErrorKind _kindFromStatus(int? statusCode) => switch (statusCode) {
+  400 => ApiErrorKind.validation,
   401 => ApiErrorKind.unauthorized,
-  404 => ApiErrorKind.notFound,
+  403 || 404 => ApiErrorKind.notFound,
+  409 => ApiErrorKind.conflict,
+  429 => ApiErrorKind.rateLimited,
+  501 => ApiErrorKind.featureDisabled,
+  // 本文のない 502〜504 は、ALB・CloudFront がサーバに届かなかったときのもの（外部サービスの失敗ではない）
   _ => ApiErrorKind.server,
 };

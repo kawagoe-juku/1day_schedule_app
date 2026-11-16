@@ -23,11 +23,15 @@ const _securityExtraKey = 'openapi.security';
 ///
 /// - 認証が必要な API にだけ `Authorization: Bearer <JWT>` を付ける
 /// - 応答の JSON から null の項目を取り除く（[removeJsonNulls]）
+/// - 認証が必要な API が 401 を返したら [onUnauthorized] を呼ぶ
 /// - 失敗を [ApiException] に変換する（`DioException.error` に入れる。
 ///   呼び出し側は `ApiException.from(error)` で取り出す）
 Dio createApiDio({
   required AppConfig config,
   required AccessTokenGetter getAccessToken,
+
+  /// 認証が必要な API が 401 を返したときに呼ぶ（ログイン画面へ戻すため）
+  Future<void> Function()? onUnauthorized,
   HttpClientAdapter? httpClientAdapter,
 }) {
   final dio = Dio(
@@ -55,8 +59,15 @@ Dio createApiDio({
         response.data = removeJsonNulls(response.data);
         handler.next(response);
       },
-      onError: (error, handler) {
-        handler.next(error.copyWith(error: ApiException.fromDio(error)));
+      onError: (error, handler) async {
+        final failure = ApiException.fromDio(error);
+        final security = error.requestOptions.extra[_securityExtraKey];
+        if (failure.kind == ApiErrorKind.unauthorized &&
+            security is List &&
+            security.isNotEmpty) {
+          await onUnauthorized?.call();
+        }
+        handler.next(error.copyWith(error: failure));
       },
     ),
   );
@@ -74,6 +85,8 @@ final apiDioProvider = Provider<Dio>((ref) {
   final dio = createApiDio(
     config: ref.watch(appConfigProvider),
     getAccessToken: ref.watch(accessTokenGetterProvider),
+    onUnauthorized: () =>
+        ref.read(sessionControllerProvider.notifier).handleUnauthorized(),
   );
   ref.onDispose(dio.close);
   return dio;

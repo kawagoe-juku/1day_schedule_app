@@ -18,6 +18,15 @@ class FakeAuthService implements AuthService {
   /// 次の操作を、この種類の失敗にする（1回だけ）
   AuthFailureKind? failNext;
 
+  /// 操作の名前（`signIn` など）ごとに、次の1回をこの種類の失敗にする
+  final failOn = <String, AuthFailureKind>{};
+
+  /// true にすると、ログインの有効期限が切れた状態になる（トークンを取ろうとすると、ログイン情報が消える）
+  bool sessionExpired = false;
+
+  /// トークンの更新を、この種類の失敗にする（通信できないなど。ログインは切れない）
+  AuthFailureKind? tokenFailure;
+
   AuthSettings? settings;
 
   void addUser(String email, String password, {bool confirmed = true}) =>
@@ -25,7 +34,7 @@ class FakeAuthService implements AuthService {
 
   void _record(String call) {
     calls.add(call);
-    final failure = failNext;
+    final failure = failNext ?? failOn.remove(call.split(':').first);
     if (failure != null) {
       failNext = null;
       throw AuthFailure(failure);
@@ -39,8 +48,12 @@ class FakeAuthService implements AuthService {
   Future<bool> isSignedIn() async => signedInEmail != null;
 
   @override
-  Future<String?> getAccessToken() async =>
-      signedInEmail == null ? null : 'token-$signedInEmail';
+  Future<String?> getAccessToken() async {
+    final failure = tokenFailure;
+    if (failure != null) throw AuthFailure(failure);
+    if (sessionExpired) signedInEmail = null;
+    return signedInEmail == null ? null : 'token-$signedInEmail';
+  }
 
   @override
   Future<void> signUp({required String email, required String password}) async {

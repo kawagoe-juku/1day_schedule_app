@@ -5,7 +5,7 @@
  * GetUser は利用者本人のアクセストークンで呼ぶ API で、AWS の認証情報（IAM）は要らない。
  */
 import { z } from 'zod';
-import { requestJson, type HttpOptions } from './http.js';
+import { ExternalApiError, requestJson, type HttpOptions } from './http.js';
 
 const SERVICE = 'cognito';
 /** 取得したメールアドレスを覚えておく時間。メールアドレスの変更は、この時間だけ遅れて反映される */
@@ -20,10 +20,30 @@ export interface CognitoUserClientOptions extends HttpOptions {
   now?: () => number;
 }
 
+/**
+ * Cognito がアクセストークンを受け付けなかった（全端末ログアウト・退会などで失効している）。
+ * 署名と期限が正しいトークンでも起こるので、API は 401 として返し、画面に再ログインさせる。
+ */
+export class CognitoTokenRejectedError extends Error {
+  constructor() {
+    super('Cognito がアクセストークンを受け付けませんでした');
+    this.name = 'CognitoTokenRejectedError';
+  }
+}
+
+/** トークンの失効・利用者の削除を表す、Cognito のエラーの種類 */
+const TOKEN_REJECTED_TYPES = new Set([
+  'NotAuthorizedException',
+  'UserNotFoundException',
+  'PasswordResetRequiredException',
+  'UserNotConfirmedException',
+]);
+
 export interface CognitoUserClient {
   /**
    * 利用者のメールアドレスを返す。
    * userId（JWT の sub）は覚えておくためのキーで、Cognito への問い合わせにはアクセストークンを使う。
+   * トークンが失効していれば CognitoTokenRejectedError を投げる。
    */
   getEmail(userId: string, accessToken: string): Promise<string>;
 }
@@ -57,7 +77,14 @@ export function createCognitoUserClient(options: CognitoUserClientOptions): Cogn
           schema: GetUserResponse,
         },
         http,
-      );
+      ).catch((error: unknown) => {
+        if (error instanceof ExternalApiError && TOKEN_REJECTED_TYPES.has(error.errorType ?? '')) {
+          // 覚えていたメールアドレスも捨てる（失効後に古い結果を返さない）
+          cache.delete(userId);
+          throw new CognitoTokenRejectedError();
+        }
+        throw error;
+      });
       const email = res.UserAttributes.find((a) => a.Name === 'email')?.Value;
       if (!email) {
         // メールアドレスでサインアップする設定なので、通常は必ずある

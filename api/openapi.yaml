@@ -326,7 +326,10 @@ paths:
       tags: [profile]
       operationId: getProfile
       summary: プロファイルを取得する
-      description: 初回ログイン時（プロファイル未作成）は `onboardingCompleted=false` の初期値を返す。
+      description: |
+        初回ログイン時（プロファイル未作成）は `onboardingCompleted=false` の初期値を返す。
+        メールアドレスは Cognito から取得する。Cognito に接続できなければ 502、
+        トークンが失効していれば（全端末ログアウト・退会の後など）401 を返す。
       responses:
         '200':
           description: プロファイル
@@ -336,6 +339,8 @@ paths:
                 $ref: '#/components/schemas/Profile'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/ExternalServiceError'
     put:
       tags: [profile]
       operationId: updateProfile
@@ -381,6 +386,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
         '502':
           $ref: '#/components/responses/ExternalServiceError'
   /api/geo/station-suggestions:
@@ -402,6 +409,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
         '502':
           $ref: '#/components/responses/ExternalServiceError'
 
@@ -929,10 +938,10 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     RateLimited:
-      description: 1日の生成上限を超えた（code=RATE_LIMITED）
+      description: 回数の上限を超えた（code=RATE_LIMITED）。行動計画は1日の生成上限、候補の API は1分あたりの上限
       headers:
         Retry-After:
-          description: 上限がリセットされるまでの秒数（日本時間0時）
+          description: 上限がリセットされるまでの秒数（行動計画は日本時間0時まで）
           schema:
             type: integer
       content:
@@ -1354,12 +1363,16 @@ components:
       properties:
         stationCode:
           type: string
+          minLength: 1
+          maxLength: 50
           description: 乗換案内APIの駅コード
         stationName:
           type: string
+          minLength: 1
           maxLength: 100
         label:
           type: string
+          minLength: 1
           maxLength: 50
           description: 自宅・勤務先などのラベル（入力どおり）
     Profile:
@@ -1415,6 +1428,8 @@ components:
           maxLength: 255
         homePlaceId:
           type: string
+          minLength: 1
+          maxLength: 512
           description: 住所サジェストで選んだ候補のID（座標の取得に使う）
         frequentStations:
           type: array

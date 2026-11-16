@@ -41,20 +41,63 @@ abstract final class AppRoutes {
       '/plans/${Uri.encodeComponent(planId)}';
 }
 
-/// ログインの状態から、開こうとしているパスの行き先を決める。null なら、そのまま開く。
+/// ログイン後に戻る先を入れておくクエリの名前（例：`/login?from=%2Fmemos`）。
+const fromQueryKey = 'from';
+
+/// ログイン後に戻る先として使ってよいパスか。
+///
+/// アプリの中のパス（`/` で始まる）だけを通す。`//example.com` や `https://…` のような
+/// 外部の URL と、戻る意味のないログイン画面・初回設定は通さない。
+bool _isReturnable(String? location) {
+  if (location == null ||
+      !location.startsWith('/') ||
+      location.startsWith('//')) {
+    return false;
+  }
+  final path = Uri.tryParse(location)?.path;
+  return path != null &&
+      path != AppRoutes.login &&
+      path != AppRoutes.onboarding;
+}
+
+/// [path] へ送る。[returnTo] が戻る先として使えるなら、クエリに付けて覚えておく。
+String _withFrom(String path, String? returnTo) => _isReturnable(returnTo)
+    ? Uri(path: path, queryParameters: {fromQueryKey: returnTo}).toString()
+    : path;
+
+/// ログインの状態から、開こうとしている場所（[location]）の行き先を決める。null なら、そのまま開く。
 ///
 /// - 未ログイン（状態の確認中・確認できないときを含む）：ログイン画面へ
 /// - ログイン済みで初回設定が済んでいない：初回設定へ
-/// - ログイン済みで初回設定も済んでいる：ログイン画面・初回設定を開こうとしたらホームへ
-String? redirectFor(SessionState session, String path) => switch (session) {
-  SessionSignedIn(onboardingCompleted: true) =>
-    path == AppRoutes.login || path == AppRoutes.onboarding
-        ? AppRoutes.home
-        : null,
-  SessionSignedIn() =>
-    path == AppRoutes.onboarding ? null : AppRoutes.onboarding,
-  _ => path == AppRoutes.login ? null : AppRoutes.login,
-};
+/// - ログイン済みで初回設定も済んでいる：ログイン画面・初回設定を開こうとしたら、
+///   元の場所（無ければホーム）へ
+///
+/// ログイン画面・初回設定へ送るときは、元の場所をクエリ（[fromQueryKey]）に覚えておく。
+/// ログイン済みで画面を再読み込みしたときも、状態の確認が終われば元の場所に戻る。
+String? redirectFor(SessionState session, Uri location) {
+  final path = location.path;
+  // すでに覚えている戻り先があればそれを引き継ぎ、無ければ今の場所を戻り先にする
+  final returnTo =
+      location.queryParameters[fromQueryKey] ?? location.toString();
+
+  switch (session) {
+    case SessionSignedIn(onboardingCompleted: true):
+      if (path != AppRoutes.login && path != AppRoutes.onboarding) return null;
+      final from = location.queryParameters[fromQueryKey];
+      return _isReturnable(from) ? from : AppRoutes.home;
+    case SessionSignedIn():
+      return path == AppRoutes.onboarding
+          ? null
+          : _withFrom(AppRoutes.onboarding, returnTo);
+    default:
+      return path == AppRoutes.login
+          ? null
+          : _withFrom(AppRoutes.login, returnTo);
+  }
+}
+
+/// 起動時に開く場所。ブラウザでは URL が優先されるので、テストで「再読み込み」をまねるために使う。
+final initialLocationProvider = Provider<String>((ref) => AppRoutes.home);
 
 /// 画面遷移の定義。
 final routerProvider = Provider<GoRouter>((ref) {
@@ -65,10 +108,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     ..onDispose(sessionChanged.dispose);
 
   final router = GoRouter(
-    initialLocation: AppRoutes.home,
+    initialLocation: ref.watch(initialLocationProvider),
     refreshListenable: sessionChanged,
     redirect: (context, state) =>
-        redirectFor(ref.read(sessionControllerProvider), state.uri.path),
+        redirectFor(ref.read(sessionControllerProvider), state.uri),
     errorBuilder: (context, state) => const NotFoundScreen(),
     routes: [
       GoRoute(

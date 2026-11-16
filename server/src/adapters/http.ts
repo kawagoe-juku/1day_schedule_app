@@ -43,6 +43,8 @@ export class ExternalApiError extends Error {
     /** kind=http のときの HTTP ステータス */
     readonly status?: number,
     detail?: string,
+    /** AWS の API が返すエラーの種類（応答ヘッダー x-amzn-errortype。例：NotAuthorizedException） */
+    readonly errorType?: string,
   ) {
     super(
       `${service}.${operation} failed: ${kind}${status ? ` ${status}` : ''}${detail ? ` (${detail})` : ''}`,
@@ -86,8 +88,8 @@ export async function requestJson<T>(
   const metrics = options.metrics ?? noopMetrics;
   const sleep = options.sleep ?? defaultSleep;
   const { service, operation } = request;
-  const fail = (kind: ExternalApiErrorKind, status?: number, detail?: string) =>
-    new ExternalApiError(service, operation, kind, status, detail);
+  const fail = (kind: ExternalApiErrorKind, status?: number, detail?: string, errorType?: string) =>
+    new ExternalApiError(service, operation, kind, status, detail, errorType);
 
   /** 1回呼び出して、結果をメトリクスに記録する */
   const attempt = async (): Promise<T> => {
@@ -120,7 +122,9 @@ export async function requestJson<T>(
 
     if (!response.ok) {
       record(response.status >= 500 ? 'server_error' : 'client_error');
-      throw fail('http', response.status);
+      // 値は「NotAuthorizedException:http://...」の形のことがあるので、種類の名前だけを取り出す
+      const errorType = response.headers.get('x-amzn-errortype')?.split(':')[0];
+      throw fail('http', response.status, undefined, errorType || undefined);
     }
     record('success');
 

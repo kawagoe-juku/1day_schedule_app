@@ -19,16 +19,18 @@ export const fakeVerifier: TokenVerifier = {
   },
 };
 
-/** 決まったメールアドレスを返す。calls に呼ばれた内容が残る */
+/** 決まったメールアドレスを返す。calls に呼ばれた内容が残る。failWith を入れると、その例外を投げる */
 export function fakeCognito(email = TEST_EMAIL) {
   const calls: { userId: string; accessToken: string }[] = [];
+  const state: { failWith?: Error } = {};
   const client: CognitoUserClient = {
     async getEmail(userId, accessToken) {
       calls.push({ userId, accessToken });
+      if (state.failWith) throw state.failWith;
       return email;
     },
   };
-  return { client, calls };
+  return { client, calls, state };
 }
 
 /** メモリ上のプロファイルの保存先（既定値は DB の定義と同じ） */

@@ -4,7 +4,7 @@ import { ExternalApiError } from '../../src/adapters/http.js';
 import type { ExternalClients } from '../../src/adapters/index.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
-import { toPrefecture } from '../../src/routes/geo.js';
+import { SUGGEST_RATE_LIMIT, toPrefecture } from '../../src/routes/geo.js';
 import { AUTH, fakeVerifier } from '../helpers/route-app.js';
 
 const config = loadConfig({ NODE_ENV: 'test' });
@@ -154,6 +154,27 @@ describe('GET /api/geo/station-suggestions', () => {
     await app!.close();
     const unconfigured = await setup({});
     expect((await unconfigured.get(`/api/geo/station-suggestions?q=${q}`)).statusCode).toBe(502);
+  });
+});
+
+describe('候補の API の回数制限', () => {
+  it('利用者ごとに、住所と駅名の合計が上限を超えたら 429（Retry-After 付き）で、外部 API を呼ばない', async () => {
+    const { get, calls } = await setup();
+    for (let i = 0; i < SUGGEST_RATE_LIMIT.limit; i += 1) {
+      const path = i % 2 === 0 ? 'address-suggestions' : 'station-suggestions';
+      expect((await get(`/api/geo/${path}?q=${q}`)).statusCode).toBe(200);
+    }
+    const res = await get(`/api/geo/address-suggestions?q=${q}`);
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error.code).toBe('RATE_LIMITED');
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    expect(calls).toHaveLength(SUGGEST_RATE_LIMIT.limit);
+
+    // ほかの利用者は影響を受けない
+    const other = await get(`/api/geo/station-suggestions?q=${q}`, {
+      authorization: 'Bearer token-other-user',
+    });
+    expect(other.statusCode).toBe(200);
   });
 });
 
