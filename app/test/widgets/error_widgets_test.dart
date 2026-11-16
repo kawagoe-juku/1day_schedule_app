@@ -93,6 +93,33 @@ void main() {
       expect(error.style?.color, AppColors.danger);
     });
 
+    testWidgets('入力欄に、読み上げ用の名前（ラベルと必須かどうか）が付く', (tester) async {
+      final handle = tester.ensureSemantics();
+      await _pump(
+        tester,
+        const Column(
+          children: [
+            FormFieldFrame(label: '自宅住所', required: true, child: TextField()),
+            FormFieldFrame(label: 'よく使う駅', child: TextField()),
+          ],
+        ),
+      );
+
+      // 入力欄そのもの（テキスト入力として読み上げられる要素）に名前が付いている
+      final fields = find.byType(TextField);
+      expect(
+        tester.getSemantics(fields.at(0)),
+        isSemantics(label: '自宅住所（必須）', isTextField: true),
+      );
+      expect(
+        tester.getSemantics(fields.at(1)),
+        isSemantics(label: 'よく使う駅', isTextField: true),
+      );
+      // 見た目のラベルは別に読み上げない（二重に読まれない）
+      expect(find.bySemanticsLabel('自宅住所（必須）'), findsOneWidget);
+      handle.dispose();
+    });
+
     testWidgets('エラーがなければ出さない', (tester) async {
       await _pump(
         tester,

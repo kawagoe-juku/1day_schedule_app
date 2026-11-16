@@ -36,6 +36,10 @@ class _PasswordResetDialogState extends ConsumerState<PasswordResetDialog> {
   var _submitting = false;
   String? _error;
 
+  /// 確認コードを送ったメールアドレス。確定のときも、必ずこの値を使う
+  /// （送信中に入力欄を書き換えても、送り先と食い違わないようにする）
+  String? _sentEmail;
+
   @override
   void dispose() {
     _email.dispose();
@@ -65,10 +69,14 @@ class _PasswordResetDialogState extends ConsumerState<PasswordResetDialog> {
     try {
       if (_step == 1) {
         await auth.requestPasswordReset(email: email);
-        if (mounted) setState(() => _step = 2);
+        if (!mounted) return;
+        setState(() {
+          _sentEmail = email;
+          _step = 2;
+        });
       } else {
         await auth.confirmPasswordReset(
-          email: email,
+          email: _sentEmail ?? email,
           code: _code.text.trim(),
           newPassword: _password.text,
         );
@@ -97,6 +105,8 @@ class _PasswordResetDialogState extends ConsumerState<PasswordResetDialog> {
         errorText: _error,
         child: TextField(
           key: const Key('reset-email'),
+          // 送信中は書き換えられないようにする
+          enabled: !_submitting,
           controller: _email,
           autofocus: true,
           keyboardType: TextInputType.emailAddress,
@@ -110,6 +120,8 @@ class _PasswordResetDialogState extends ConsumerState<PasswordResetDialog> {
         errorText: _error,
         child: TextField(
           key: const Key('reset-code'),
+          // 送信中は書き換えられないようにする
+          enabled: !_submitting,
           controller: _code,
           autofocus: true,
           keyboardType: TextInputType.number,
@@ -126,6 +138,8 @@ class _PasswordResetDialogState extends ConsumerState<PasswordResetDialog> {
         errorText: _error,
         child: TextField(
           key: const Key('reset-password'),
+          // 送信中は書き換えられないようにする
+          enabled: !_submitting,
           controller: _password,
           autofocus: true,
           obscureText: true,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../auth/auth_service.dart';
 import '../auth/session_controller.dart';
 import '../theme/app_theme.dart';
 
@@ -57,8 +58,16 @@ class PlaceholderBody extends ConsumerWidget {
           ),
         if (showLogout)
           OutlinedButton(
-            onPressed: () =>
-                ref.read(sessionControllerProvider.notifier).signOut(),
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              try {
+                await ref.read(sessionControllerProvider.notifier).signOut();
+              } on AuthFailure catch (failure) {
+                messenger.showSnackBar(
+                  SnackBar(content: Text(failure.message)),
+                );
+              }
+            },
             child: const Text(logoutLabel),
           ),
       ],

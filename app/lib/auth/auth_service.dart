@@ -18,6 +18,9 @@ enum AuthFailureKind {
   /// 管理者がパスワードをリセットした。パスワードリセットをしてからでないとログインできない
   passwordResetRequired,
 
+  /// ログアウトで、この端末に残っているログイン情報を消せなかった
+  signOutFailed,
+
   /// 短時間に試しすぎた
   tooManyAttempts,
 
@@ -43,6 +46,7 @@ class AuthFailure implements Exception {
     AuthFailureKind.codeExpired => '確認コードの有効期限が切れています。コードを再送してください',
     AuthFailureKind.passwordResetRequired =>
       'パスワードの再設定が必要です。「パスワードを忘れた場合」から設定し直してください',
+    AuthFailureKind.signOutFailed => 'ログアウトできませんでした。もう一度お試しください',
     AuthFailureKind.tooManyAttempts => '試行回数が多すぎます。しばらくしてから、もう一度お試しください',
     AuthFailureKind.network => '通信できませんでした。接続を確認して、もう一度お試しください',
     AuthFailureKind.unknown => 'エラーが発生しました。しばらくしてから、もう一度お試しください',
@@ -108,6 +112,9 @@ abstract interface class AuthService {
     required String password,
   });
 
+  /// ログアウトする。この端末のログイン情報を消せなかったときだけ、
+  /// [AuthFailureKind.signOutFailed] の [AuthFailure] を投げる。
+  /// サーバ側の取り消しだけが失敗したとき（通信できないなど）は、成功として扱う。
   Future<void> signOut();
 
   /// パスワードリセットの確認コードをメールで送る。

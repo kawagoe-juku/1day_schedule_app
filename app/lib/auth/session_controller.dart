@@ -116,7 +116,7 @@ class SessionController extends Notifier<SessionState> {
       if (!await _auth.isSignedIn()) {
         state = const SessionSignedOut();
       } else if (await _isIdleTooLong()) {
-        await signOut();
+        await _expire();
       } else {
         await _enter();
       }
@@ -132,7 +132,7 @@ class SessionController extends Notifier<SessionState> {
       // 先にトークンを確かめる。期限切れなら、API を呼ぶ前にログアウトにする。
       // 一時的に更新できないだけなら AuthFailure になり、下でやり直せる状態にする
       if (await _auth.getAccessToken() == null) {
-        await signOut();
+        await _expire();
         return;
       }
       final profile = await ref.read(apiProvider).profile.getProfile();
@@ -141,7 +141,7 @@ class SessionController extends Notifier<SessionState> {
       if (error is! AuthFailure &&
           ApiException.from(error).kind == ApiErrorKind.unauthorized) {
         // ログイン情報が無効になっている（全端末ログアウト・退会など）
-        await signOut();
+        await _expire();
       } else {
         state = const SessionUnavailable();
       }
@@ -167,11 +167,29 @@ class SessionController extends Notifier<SessionState> {
     return outcome;
   }
 
+  /// ログアウトする（利用者の操作によるもの）。
+  ///
+  /// この端末のログイン情報を消せなかったときは、ログイン中のまま [AuthFailure] を投げる
+  /// （ログアウトできていないのに、できたように見せない）。
   Future<void> signOut() async {
     try {
       await _auth.signOut();
+    } on AuthFailure catch (failure) {
+      if (failure.kind == AuthFailureKind.signOutFailed) rethrow;
+      // それ以外（サーバ側の取り消しの失敗など）は、端末のログイン情報が消えているので先へ進む
+    }
+    await _activity.clear();
+    state = const SessionSignedOut();
+  }
+
+  /// ログインを打ち切る（無操作の上限・期限切れ・サーバがトークンを受け付けない、など）。
+  ///
+  /// ログイン情報はもう使えないので、端末から消せなくても、ログイン画面へ戻す。
+  Future<void> _expire() async {
+    try {
+      await _auth.signOut();
     } on AuthFailure {
-      // サーバ側の取り消しに失敗しても、この端末のログイン情報は消えているので先へ進む
+      // 消せなくても、使えないログイン情報が残るだけ。次の起動時にもう一度ここへ来る
     }
     await _activity.clear();
     state = const SessionSignedOut();
@@ -187,7 +205,7 @@ class SessionController extends Notifier<SessionState> {
   /// API が 401 を返したときに呼ぶ。ログインが無効になっている（期限切れ・ほかの端末での
   /// ログアウト・退会など）ので、この端末もログアウトしてログイン画面へ戻す。
   Future<void> handleUnauthorized() async {
-    if (state is SessionSignedIn) await signOut();
+    if (state is SessionSignedIn) await _expire();
   }
 
   /// API に付けるアクセストークン。
@@ -199,13 +217,13 @@ class SessionController extends Notifier<SessionState> {
     final signedIn = state is SessionSignedIn;
     if (!signedIn && state is! SessionLoading) return null;
     if (await _isIdleTooLong()) {
-      await signOut();
+      await _expire();
       return null;
     }
     final token = await _auth.getAccessToken();
     if (token == null) {
       // ログイン中のはずなのにトークンが無い＝ログインの有効期限が切れた
-      if (signedIn) await signOut();
+      if (signedIn) await _expire();
       return null;
     }
     // ログアウトの処理と重なったときに、消した記録を書き戻さない

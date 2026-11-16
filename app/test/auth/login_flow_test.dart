@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ai_schedule_app/api/api_client.dart';
 import 'package:ai_schedule_app/api/api_exception.dart';
 import 'package:ai_schedule_app/auth/auth_service.dart';
@@ -380,6 +382,43 @@ void main() {
       expectScreen('ホーム');
     });
 
+    testWidgets('コードの送信中は入力欄を書き換えられず、確定には送信したメールアドレスを使う', (tester) async {
+      final env = await open(tester);
+      final hold = Completer<void>();
+      env.auth.holdPasswordResetRequest = hold;
+
+      await enter(tester, 'reset-email', testEmail);
+      await tester.tap(find.byKey(const Key('reset-next')));
+      await tester.pump();
+
+      // 送信中：入力欄もボタンも使えない
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('reset-email')),
+      );
+      expect(field.enabled, isFalse);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('reset-next')))
+            .onPressed,
+        isNull,
+      );
+
+      hold.complete();
+      await tester.pumpAndSettle();
+      await enter(tester, 'reset-code', FakeAuthService.validCode);
+      await tapKey(tester, 'reset-next');
+      await enter(tester, 'reset-password', 'NewPassword2');
+      await tapKey(tester, 'reset-next');
+
+      expect(
+        env.auth.calls,
+        contains(
+          'confirmPasswordReset:$testEmail:${FakeAuthService.validCode}',
+        ),
+      );
+      expect(env.auth.users[testEmail]?.password, 'NewPassword2');
+    });
+
     testWidgets('IT-021 メール形式が違えば、ステップ2へ進まない', (tester) async {
       final env = await open(tester);
 
@@ -604,6 +643,41 @@ void main() {
 
       expectScreen('ログイン');
       expect(env.activity.value, isNull);
+    });
+
+    testWidgets('端末のログイン情報を消せなければ、ログアウトできなかったと知らせ、ログイン中のままにする', (tester) async {
+      final env = await pumpApp(tester);
+      env.auth.failOn['signOut'] = AuthFailureKind.signOutFailed;
+
+      await tapButton(tester, '設定');
+      await tapButton(tester, 'ログアウト');
+
+      expect(find.text('ログアウトできませんでした。もう一度お試しください'), findsOneWidget);
+      expectScreen('アカウント・設定');
+      expect(env.auth.signedInEmail, testEmail);
+      expect(env.activity.value, isNotNull);
+
+      // もう一度押せば、ログアウトできる
+      await tapButton(tester, 'ログアウト');
+      expectScreen('ログイン');
+    });
+
+    testWidgets('ログインの打ち切り（401）では、端末の情報を消せなくてもログイン画面へ戻す', (tester) async {
+      final env = await pumpApp(tester);
+      env.auth.failOn['signOut'] = AuthFailureKind.signOutFailed;
+      env.profileFailureStatus = 401;
+
+      await tester.runAsync(
+        () =>
+            containerOf(tester)
+                .read(apiProvider)
+                .profile
+                .getProfile()
+                .then<void>((_) {}, onError: (Object _) {}),
+      );
+      await tester.pumpAndSettle();
+
+      expectScreen('ログイン');
     });
 
     testWidgets('初回設定が終わったことを反映すると、ホームへ進む', (tester) async {

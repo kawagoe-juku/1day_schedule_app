@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ai_schedule_app/auth/auth_service.dart';
 import 'package:ai_schedule_app/auth/session_controller.dart';
 
@@ -26,6 +28,9 @@ class FakeAuthService implements AuthService {
 
   /// トークンの更新を、この種類の失敗にする（通信できないなど。ログインは切れない）
   AuthFailureKind? tokenFailure;
+
+  /// 入れておくと、パスワードリセットのコード送信が、これが完了するまで終わらない（遅い通信のまね）
+  Completer<void>? holdPasswordResetRequest;
 
   AuthSettings? settings;
 
@@ -102,8 +107,10 @@ class FakeAuthService implements AuthService {
   }
 
   @override
-  Future<void> requestPasswordReset({required String email}) async =>
-      _record('requestPasswordReset:$email');
+  Future<void> requestPasswordReset({required String email}) async {
+    _record('requestPasswordReset:$email');
+    await holdPasswordResetRequest?.future;
+  }
 
   @override
   Future<void> confirmPasswordReset({

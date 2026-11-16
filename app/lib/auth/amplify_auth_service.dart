@@ -114,7 +114,12 @@ class AmplifyAuthService implements AuthService {
 
   @override
   Future<void> signOut() => _guard(() async {
-    await Amplify.Auth.signOut();
+    final result = await Amplify.Auth.signOut();
+    // 例外ではなく結果で返ってくる。端末のログイン情報を消せたか（完了・一部失敗）、
+    // 消せなかったか（失敗）を分ける。一部失敗は、サーバ側の取り消しだけが失敗したもの
+    if (result is CognitoFailedSignOut) {
+      throw const AuthFailure(AuthFailureKind.signOutFailed);
+    }
   });
 
   @override

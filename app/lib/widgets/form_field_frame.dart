@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 /// 入力項目の枠。上にラベル（必須なら赤い `*`）、下に入力エラーを出す。
+/// ラベルと必須かどうかは、読み上げ用の名前として入力欄にも付ける。
 ///
 /// テキスト入力のエラーは `InputDecoration.errorText` でも出せるが、ラジオボタンや
 /// チェックボックスなど入力欄の種類によらず同じ見た目にするため、この部品で出す。
@@ -36,21 +37,24 @@ class FormFieldFrame extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text.rich(
-            TextSpan(
-              text: label,
-              children: [
-                if (required)
-                  const TextSpan(
-                    text: ' *',
-                    style: TextStyle(color: AppColors.danger),
-                    semanticsLabel: '（必須）',
-                  ),
-              ],
+          // 見た目のラベル。読み上げは下の入力欄に付けるので、ここは読み上げない（二重に読まれないように）
+          ExcludeSemantics(
+            child: Text.rich(
+              TextSpan(
+                text: label,
+                children: [
+                  if (required)
+                    const TextSpan(
+                      text: ' *',
+                      style: TextStyle(color: AppColors.danger),
+                    ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 8),
-          child,
+          // 入力欄そのものに名前を付ける。スクリーンリーダーで入力欄に直接移っても、何の項目か分かる
+          Semantics(label: required ? '$label（必須）' : label, child: child),
           if (errorText != null) FieldErrorText(errorText),
         ],
       ),
