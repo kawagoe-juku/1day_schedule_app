@@ -8,7 +8,12 @@
 !server/tsconfig.json
 !server/tsconfig.build.json
 !server/src
+!server/drizzle
+# 取り消し用の SQL と、SQL を作るときだけ使う記録は入れない（AWS 上では取り消しを実行させない）
+server/drizzle/down
+server/drizzle/meta/*_snapshot.json
 !infra/package.json
 **/node_modules
 **/.env
 **/.env.*
+**/.DS_Store

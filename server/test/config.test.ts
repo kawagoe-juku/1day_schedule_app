@@ -40,6 +40,15 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...prod, ...db, ...cognito, ...ca }).NODE_ENV).toBe('production');
   });
 
+  it('DB_MIGRATE_ON_START は既定で false。true にするには DB の接続設定が要る', () => {
+    expect(loadConfig({}).DB_MIGRATE_ON_START).toBe(false);
+    expect(() => loadConfig({ DB_MIGRATE_ON_START: 'true' })).toThrow('DB_MIGRATE_ON_START');
+    const db = { DATABASE_URL: 'postgres://u:p@db.example.internal:5432/app' };
+    expect(loadConfig({ DB_MIGRATE_ON_START: 'true', ...db }).DB_MIGRATE_ON_START).toBe(true);
+    // 'true'・'false' 以外は設定ミスとして扱う
+    expect(() => loadConfig({ DB_MIGRATE_ON_START: '1', ...db })).toThrow('環境変数が不正です');
+  });
+
   it('不正な値は起動時にエラーになる', () => {
     expect(() => loadConfig({ PORT: 'abc' })).toThrow('環境変数が不正です');
   });

@@ -28,6 +28,11 @@ const ConfigSchema = z.object({
   DB_PASSWORD: z.string().optional(),
   /** DB 接続で検証する CA 証明書のファイル（Aurora は TLS 必須。コンテナに RDS の CA を同梱） */
   DB_SSL_CA_PATH: z.string().optional(),
+  /**
+   * 'true' のとき、サーバの起動時に未適用のマイグレーションを適用してから受付を始める。
+   * ECS では App スタックが true にする。手元では false（npm run db:migrate で適用する）。
+   */
+  DB_MIGRATE_ON_START: flag,
   /** JWT の検証先（ECS では App スタックが設定する。ローカルは .env に dev の値を書く） */
   COGNITO_USER_POOL_ID: z.string().optional(),
   COGNITO_WEB_CLIENT_ID: z.string().optional(),
@@ -64,6 +69,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (missing.length > 0) {
       throw invalid(`本番（NODE_ENV=production）では ${missing.join('・')} が必要です`);
     }
+  }
+  if (c.DB_MIGRATE_ON_START && !c.DB_HOST && !c.DATABASE_URL) {
+    throw invalid('DB_MIGRATE_ON_START=true には DB_HOST または DATABASE_URL が必要です');
   }
   if (!c.DB_HOST) return c;
   if (!c.DB_NAME || !c.DB_USER || !c.DB_PASSWORD) {
