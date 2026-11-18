@@ -76,7 +76,7 @@ describe('AppStack', () => {
       Properties: {
         ContainerDefinitions: {
           PortMappings: { ContainerPort: number }[];
-          Environment: { Name: string }[];
+          Environment: { Name: string; Value?: unknown }[];
           Secrets: { Name: string }[];
         }[];
       };
@@ -99,8 +99,11 @@ describe('AppStack', () => {
         'COGNITO_WEB_CLIENT_ID',
         'BEDROCK_MODEL_ID',
         'DB_NAME',
+        'DB_MIGRATE_ON_START',
       ]),
     );
+    // 起動時にマイグレーションを適用する（'true' 以外だと、取り込んでもテーブルが作られない）
+    expect(c.Environment.find((e) => e.Name === 'DB_MIGRATE_ON_START')?.Value).toBe('true');
     // パスワードなどの値を環境変数に直接書いていない
     expect(envNames.some((n) => /PASSWORD|KEY$/.test(n))).toBe(false);
   });

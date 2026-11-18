@@ -1,24 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 
-/// アプリの表示名。ブラウザのタブ名にも使われる。
-const appTitle = 'AIスケジュール外出支援';
+import 'app.dart';
 
 void main() {
-  runApp(const App());
-}
-
-/// アプリのルート。画面は未実装のため、アプリ名だけを表示する。
-class App extends StatelessWidget {
-  const App({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: appTitle,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const Scaffold(body: Center(child: Text(appTitle))),
-    );
-  }
+  // URL を /#/routines ではなく /routines の形にする。
+  // 再読み込み時は、CloudFront が拡張子のないパスを index.html に読み替える（infra の web-stack）。
+  usePathUrlStrategy();
+  runApp(
+    ProviderScope(
+      // 失敗した取得を自動でやり直さない（画面の「再試行」ボタンでやり直す）
+      retry: (retryCount, error) => null,
+      child: const App(),
+    ),
+  );
 }

@@ -31,6 +31,10 @@ export class AppError extends Error {
 /** 認証の失敗。理由（期限切れ・署名不正など）は利用者に返さない */
 export const unauthorized = () => new AppError(401, 'UNAUTHORIZED', '認証が必要です');
 
+/** 入力が不正。details に項目ごとの内容を入れる。API 仕様の 400 VALIDATION_ERROR */
+export const validationError = (details: ErrorDetail[]) =>
+  new AppError(400, 'VALIDATION_ERROR', '入力内容を確認してください', details);
+
 /** 準備のみの機能（Feature Flag が OFF）。API 仕様の 501 FEATURE_DISABLED */
 export const featureDisabled = () =>
   new AppError(501, 'FEATURE_DISABLED', 'この機能は現在ご利用いただけません');

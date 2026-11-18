@@ -25,8 +25,10 @@ npm run typecheck
 npm test
 npm run api:check
 
-echo "## 画面の静的解析・テスト・ビルド"
-(cd app && flutter pub get && flutter analyze && flutter test && flutter build web --release)
+echo "## 画面の API クライアントが api/openapi.yaml と合っているか・静的解析・テスト・ビルド"
+(cd app && flutter pub get)
+npm run app:generate:check
+(cd app && flutter analyze && flutter test && flutter build web --release --dart-define=APP_ENV="$STAGE")
 
 echo "## cdk synth（stage=$STAGE）"
 (cd infra && npx --yes aws-cdk@2 synth -c stage="$STAGE" --quiet)

@@ -1,0 +1,9 @@
+# 手元で画面を起動するとき（npm run app:dev）の設定。
+# /api・/agent を手元のサーバ（npm run dev、ポート 3000）へ転送する。
+# 開発環境などと同じく、画面と API が同じドメインにある形になる（CORS の設定が要らない）。
+server:
+  proxy:
+    - target: "http://localhost:3000"
+      prefix: "/api/"
+    - target: "http://localhost:3000"
+      prefix: "/agent/"

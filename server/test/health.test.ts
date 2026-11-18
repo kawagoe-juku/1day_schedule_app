@@ -35,3 +35,32 @@ describe('GET /api/health/ready', () => {
     expect(res.json()).toEqual(body);
   });
 });
+
+describe('GET /api/config', () => {
+  it('認証なしで、ログイン先の Cognito の設定を返す', async () => {
+    app = await buildApp({
+      config: loadConfig({
+        NODE_ENV: 'test',
+        COGNITO_USER_POOL_ID: 'ap-northeast-1_TestPool1',
+        COGNITO_WEB_CLIENT_ID: 'test-web-client',
+      }),
+      logger: false,
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/config' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      cognito: {
+        region: 'ap-northeast-1',
+        userPoolId: 'ap-northeast-1_TestPool1',
+        webClientId: 'test-web-client',
+      },
+    });
+  });
+
+  it('Cognito が未設定なら 500', async () => {
+    app = await buildApp({ config, logger: false });
+    const res = await app.inject({ method: 'GET', url: '/api/config' });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error.code).toBe('INTERNAL_ERROR');
+  });
+});

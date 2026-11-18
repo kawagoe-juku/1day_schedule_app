@@ -8,8 +8,19 @@ import { createCognitoVerifier, registerAuth, type TokenVerifier } from './auth.
 import type { Config } from './config.js';
 import type { DbChecker } from './db/client.js';
 import { ExternalApiError } from './adapters/http.js';
-import { AppError, errorBody, externalServiceError, type ErrorCode } from './errors.js';
+import {
+  AppError,
+  errorBody,
+  externalServiceError,
+  unauthorized,
+  type ErrorCode,
+} from './errors.js';
+import { CognitoTokenRejectedError, type CognitoUserClient } from './adapters/cognito.js';
+import type { ExternalClients } from './adapters/index.js';
+import { geoRoutes } from './routes/geo.js';
+import { RateLimitedError } from './rate-limit.js';
 import { healthRoutes } from './routes/health.js';
+import { profileRoutes, type ProfileStore } from './routes/profile.js';
 import { sessionRoutes } from './routes/session.js';
 
 /** クライアント指定の x-request-id は、ログ・応答ヘッダーに安全な形式のみ受け付ける */
@@ -41,6 +52,27 @@ function toField(instancePath: string, params: Record<string, unknown> | undefin
 }
 
 /**
+ * 想定外の例外を、ログに出してよい形にする。
+ * DB の失敗（Drizzle の例外）は、メッセージに SQL へ渡した値（住所・座標など）が入るため、
+ * そのままは出さない。SQL の文（値は $1 などの記号）と、PostgreSQL のエラーコードだけを残す。
+ */
+export function toLoggableError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error && 'query' in error && 'params' in error) {
+    const cause: unknown = error.cause;
+    return {
+      dbError: {
+        type: error.name,
+        query: typeof error.query === 'string' ? error.query : undefined,
+        // 23505（一意制約）などのコード。メッセージと detail には値が入り得るので出さない
+        code: cause instanceof Error && 'code' in cause ? cause.code : undefined,
+        causeType: cause instanceof Error ? cause.name : undefined,
+      },
+    };
+  }
+  return { err: error };
+}
+
+/**
  * ログの設定。要求ログの URL はパスだけにする（住所サジェストの q、OAuth の code・state などを残さない）。
  * 認証情報も出さない（既定の要求ログはヘッダーを出さないが、出力項目を増やしたときの保険）。
  */
@@ -60,6 +92,12 @@ export interface BuildAppOptions {
   db?: DbChecker;
   /** テスト用。指定しない場合は config の Cognito の設定から作る */
   verifier?: TokenVerifier;
+  /** プロファイルの保存先（userRepository）。DB が未設定なら渡さない */
+  users?: ProfileStore;
+  /** 外部 API クライアント（Google Maps・乗換案内）。キーが未設定のものは undefined */
+  external?: ExternalClients;
+  /** Cognito から利用者の情報を取得するクライアント。Cognito が未設定なら渡さない */
+  cognito?: CognitoUserClient;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -67,6 +105,9 @@ export async function buildApp({
   config,
   db,
   verifier,
+  users,
+  external = {},
+  cognito,
   logger,
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
@@ -98,6 +139,13 @@ export async function buildApp({
       );
       error = externalServiceError();
     }
+    if (error instanceof CognitoTokenRejectedError) {
+      request.log.info({ reason: 'token rejected by cognito' }, 'unauthorized');
+      error = unauthorized();
+    }
+    if (error instanceof RateLimitedError) {
+      void reply.header('retry-after', error.retryAfterSeconds);
+    }
     if (error instanceof AppError) {
       return reply
         .code(error.statusCode)
@@ -118,7 +166,7 @@ export async function buildApp({
       request.log.info({ statusCode: status, code: error.code }, 'client error');
       return reply.code(status).send(errorBody(code, message, request.id));
     }
-    request.log.error({ err: error }, 'unhandled error');
+    request.log.error(toLoggableError(error), 'unhandled error');
     return reply
       .code(500)
       .send(
@@ -143,8 +191,17 @@ export async function buildApp({
   );
 
   // /api（APIサービス）と /agent（AI連携基盤）のルートを登録する（認証は registerAuth が既定で掛ける）
-  await app.register(healthRoutes, { version: config.APP_VERSION, db });
+  await app.register(healthRoutes, {
+    version: config.APP_VERSION,
+    db,
+    cognito:
+      config.COGNITO_USER_POOL_ID && config.COGNITO_WEB_CLIENT_ID
+        ? { userPoolId: config.COGNITO_USER_POOL_ID, webClientId: config.COGNITO_WEB_CLIENT_ID }
+        : undefined,
+  });
   await app.register(sessionRoutes);
+  await app.register(profileRoutes, { users, cognito, googleMaps: external.googleMaps });
+  await app.register(geoRoutes, { googleMaps: external.googleMaps, navitime: external.navitime });
 
   return app;
 }

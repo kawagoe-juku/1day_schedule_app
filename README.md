@@ -79,7 +79,7 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run api:check` | OpenAPI 定義のチェック（参照切れ・要件APIの網羅） |
 | `npm run db:up` / `db:down` | ローカルDBの起動・停止 |
 | `npm run db:psql` | ローカルDBに psql で接続 |
-| `npm run db:migrate` | 未適用のマイグレーションを適用（接続先は `server/.env` の `DATABASE_URL`） |
+| `npm run db:migrate` | 未適用のマイグレーションを適用（接続先は `server/.env` の `DATABASE_URL`。AWS 上ではサーバの起動時に自動で適用する） |
 | `npm run db:rollback` | 直近のマイグレーションを1件取り消す（テーブルとデータが消える。本番では実行できない） |
 | `npm run db:generate -- --name <名前>` | スキーマ定義の変更からマイグレーションの SQL を作る |
 | `npm run aws:check` | 開発環境の AWS の状態確認（変更しない。結果は `logs/aws-check.log`） |
@@ -89,6 +89,7 @@ curl http://localhost:3000/api/health/ready  # {"status":"ok","checks":{"db":"ok
 | `npm run app:setup` | Flutter（Web）環境のセットアップと動作確認（macOS、初回のみ） |
 | `npm run app:dev` | Webアプリを Chrome で起動 |
 | `npm run app:test` | Webアプリの静的解析とテスト |
+| `npm run app:generate` | Webアプリの API クライアントを `api/openapi.yaml` から作り直す |
 | `npm run app:build` | Webアプリをビルド（`app/build/web`） |
 
 ## Feature Flag
@@ -140,7 +141,20 @@ OFF の機能の API は、処理の最初に `assertFeatureEnabled(config, '<�
 3. 同じ名前で `server/drizzle/down/` に取り消し用の SQL を書く。
 4. ローカルDBで `npm run db:migrate` → `npm run db:rollback` → `npm run db:migrate` が通ることを確かめる。
 
-開発環境（Aurora）への適用手順はまだ用意していない（自動デプロイには組み込んでいない）。
+### AWS 上の環境（Aurora）への適用
+
+サーバの起動時に、未適用のマイグレーションを自動で適用する（環境変数 `DB_MIGRATE_ON_START=true`。App スタックが設定する）。`main` に取り込むと自動デプロイで新しい版が起動し、そのときに適用される。手作業は要らない。
+
+- 適用が終わってから受付を始める。適用に失敗した版は起動せず、ECS が前の版に戻す（自動デプロイは失敗として通知される）。原因はサーバのログ（`migration failed`）で確かめる。
+- 複数台が同時に起動しても、DB のロック（`pg_advisory_lock`）で1台だけが適用する。
+- **数十秒を超える変更（大きなテーブルへのインデックス追加・データの詰め替えなど）は、起動時の適用に載せない。** 適用が終わるまでサーバは受付を始めず、3分（ヘルスチェックの猶予）を超えると ECS に止められて、何度デプロイしても通らなくなる（ログは `migration interrupted`）。必要になったら、別の手順を用意する。
+- テーブルのロックは10秒までしか待たない。稼働中の処理と重なって失敗したときは、ECS の再試行で通る。
+- すべてのマイグレーションを1つのトランザクションで適用する。失敗すると何も残らない。トランザクションの中で使えない文（`CREATE INDEX CONCURRENTLY` など）は書けない。
+- 適用のあと、一覧（`meta/_journal.json`）のすべてが適用済みかを確かめ、漏れがあれば起動しない。漏れるのは、別々のブランチで作ったマイグレーションが日時の逆順で取り込まれたとき（Drizzle は、適用済みの最新より新しいものだけを適用する）。**他のマイグレーションが先に `main` に入ったら、自分のブランチの SQL を作り直す。**
+- DB が止まっている間は、サーバを新しく起動できない（稼働中のサーバには影響しない）。
+- 入れ替えの間は、前の版のサーバが新しいテーブル定義で動く。**前の版が動かなくなる変更（列の削除・名前の変更など）は、1回のリリースに入れない**（先に使うのをやめた版を出し、次のリリースで削除する）。
+- 取り消し（`db:rollback`）は AWS 上では行わない。戻すときは、打ち消す内容のマイグレーションを新しく追加する。
+- 手元（`npm run dev`）では自動で適用しない。`npm run db:migrate` を使う。
 
 ## デプロイ
 

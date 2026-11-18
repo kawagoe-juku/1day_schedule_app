@@ -24,6 +24,8 @@ COPY server/package.json server/
 COPY infra/package.json infra/
 RUN npm ci -w @ai-schedule-app/server --include-workspace-root=false --omit=dev && npm cache clean --force
 COPY --from=build /repo/server/dist server/dist
+# マイグレーションの SQL（起動時に未適用のものを適用する。DB_MIGRATE_ON_START）
+COPY server/drizzle server/drizzle
 # Aurora は TLS 必須のため、RDS の CA 証明書を同梱して接続先を検証する
 # 置き場所は先に作る（ADD に任せると --chmod がフォルダにも掛かり、node ユーザーが読めなくなる）
 RUN mkdir -p -m 755 /app/certs

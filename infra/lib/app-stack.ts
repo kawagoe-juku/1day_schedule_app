@@ -132,6 +132,8 @@ export class AppStack extends Stack {
         BEDROCK_MODEL_ID,
         // DB 名は秘密ではないので通常の環境変数で渡す（ホスト・ユーザー・パスワードはシークレットから。ポートは既定の 5432）
         DB_NAME: DATABASE_NAME,
+        // 起動時に未適用のマイグレーションを適用してから受付を始める（失敗した版は起動せず、前の版に戻る）
+        DB_MIGRATE_ON_START: 'true',
       },
       secrets: {
         DB_HOST: EcsSecret.fromSecretsManager(props.dbSecret, 'host'),
@@ -167,7 +169,8 @@ export class AppStack extends Stack {
       assignPublicIp: false,
       circuitBreaker: { rollback: true }, // 起動に失敗した版は自動で元に戻す
       enableExecuteCommand: app.ecsExec, // 調査用（使う IAM ユーザーには別途 ecs:ExecuteCommand の権限が要る）
-      healthCheckGracePeriod: Duration.seconds(30),
+      // 起動時のマイグレーション（Aurora の休止からの復帰を含む）が終わるまで、ヘルスチェックの失敗で止めない
+      healthCheckGracePeriod: Duration.seconds(180),
     });
     this.service
       .autoScaleTaskCount({ minCapacity: app.minTasks, maxCapacity: app.maxTasks })

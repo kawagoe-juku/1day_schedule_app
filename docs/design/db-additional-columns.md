@@ -11,7 +11,7 @@
 | --- | --- | --- | --- | --- |
 | D1 | DBMS と型の読み替え（U2） | PostgreSQL 16（Aurora）。`INT`→`integer`（主キーは `integer GENERATED ALWAYS AS IDENTITY`）、`DATETIME`→`timestamptz`、`TINYINT(1)`→`boolean`、`JSON`→`jsonb`、`DOUBLE`→`double precision`、`VARCHAR(n)`→`varchar(n)`。文字コード・照合順序・エンジンの記載は削除 | 要件の Aurora PostgreSQL に合わせる。時刻はタイムゾーン付きで保存し、表示時に日本時間へ変換する | 承認（2026-11-10） |
 | D2 | ユーザーの識別子（U3） | `user.id` は **Cognito の sub（`varchar(64)`）を主キー**にする。他テーブルの `user_id` も同じ型。`cognito_user_id` 列は廃止（`id` と同じになるため） | エンティティ定義の回答（2026-08-31）で「user_id は Cognito sub に統一」と決定済み。JWT の sub でそのまま引ける | 承認（2026-11-10） |
-| D3 | email を DB に持つか | **持たない**。プロファイル取得時は JWT（ID トークン）の email を返す | 正本は Cognito。二重管理による不一致と、個人情報の保存箇所を減らす | 承認（2026-11-10） |
+| D3 | email を DB に持つか | **持たない**。プロファイル取得時は、サーバが Cognito（GetUser）から取得して返す（当初案は「ID トークンの email」。API が受け取るアクセストークンには email が無いため、4.4 の実装時に変更。2026-11-11） | 正本は Cognito。二重管理による不一致と、個人情報の保存箇所を減らす | 承認（2026-11-10） |
 | D4 | 論理削除と退会（U4） | 退会は**物理削除**（要件どおり）。`user` の `is_deleted`・`deleted_at` は廃止。子テーブルは `ON DELETE CASCADE` に変更し、退会時に一括削除 | 論理削除のままだと退会後も個人情報が残り、要件と矛盾する | 承認（2026-11-10） |
 | D5 | 他テーブルの論理削除 | `plan`・`plan_item`・`memo`・`routine` などの `is_deleted`・`deleted_at` も**廃止**し、削除は物理削除。監査が必要な `slot_evaluation`・`agent_session` は計画の削除に合わせて CASCADE | API に「削除済みを見る」機能がなく、論理削除の条件漏れによる不具合を避ける | 承認（2026-11-10） |
 | D6 | 作成者・更新者列 | `created_by_user_id`・`updated_by_user_id` は**廃止** | 本人以外が更新する経路がなく、常に `user_id` と同じになる | 承認（2026-11-10） |
