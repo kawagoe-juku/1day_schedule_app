@@ -62,6 +62,9 @@ Future<void> _type(WidgetTester tester, String text) async {
   await tester.pump(suggestionDebounce);
 }
 
+bool _fieldHasFocus(WidgetTester tester) =>
+    tester.widget<TextField>(find.byKey(_fieldKey)).focusNode!.hasFocus;
+
 void main() {
   testWidgets('応答が前後して届いても、最後の入力の候補だけを出す', (tester) async {
     final search = _FakeSearch();
@@ -171,6 +174,103 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
     expect(find.text('東京都千代田区'), findsNothing);
+  });
+
+  testWidgets('候補の行にフォーカスがあっても Esc で閉じ、入力欄に戻っても開き直さない', (tester) async {
+    final search = _FakeSearch();
+    await _pump(tester, search, searchOnFocus: true);
+    await _type(tester, '東京');
+    search.respond('東京', ['東京都千代田区']);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(_fieldHasFocus(tester), isFalse);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(suggestionDebounce);
+    expect(find.text('東京都千代田区'), findsNothing);
+    expect(_fieldHasFocus(tester), isTrue);
+    expect(search.queries, ['東京']);
+  });
+
+  testWidgets('↓ と Enter で候補を選んだあと、searchOnFocus でも一覧を開き直さない', (tester) async {
+    final search = _FakeSearch();
+    final (controller: _, :selected) = await _pump(
+      tester,
+      search,
+      searchOnFocus: true,
+    );
+    await _type(tester, '東京');
+    search.respond('東京', ['東京都千代田区']);
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(suggestionDebounce);
+    expect(selected, ['東京都千代田区']);
+    expect(_fieldHasFocus(tester), isTrue);
+    expect(search.queries, ['東京']);
+  });
+
+  testWidgets('取得を待つ間に変換を始めて取り消しても、元の文字で取得する', (tester) async {
+    final search = _FakeSearch();
+    final (:controller, selected: _) = await _pump(tester, search);
+    await tester.enterText(find.byKey(_fieldKey), '東京');
+    await tester.pump(suggestionDebounce ~/ 2);
+
+    // 取得が始まる前に、続きの変換を始める
+    controller.value = const TextEditingValue(
+      text: '東京と',
+      selection: TextSelection.collapsed(offset: 3),
+      composing: TextRange(start: 2, end: 3),
+    );
+    await tester.pump(suggestionDebounce * 2);
+    expect(search.queries, isEmpty);
+
+    // 変換を取り消して、元の文字に戻る
+    controller.value = const TextEditingValue(
+      text: '東京',
+      selection: TextSelection.collapsed(offset: 2),
+    );
+    await tester.pump(suggestionDebounce);
+    expect(search.queries, ['東京']);
+  });
+
+  testWidgets('取得中に入力を変えたら、前の入力の応答が先に届いても候補を出さない', (tester) async {
+    final search = _FakeSearch();
+    await _pump(tester, search);
+    await _type(tester, '東京');
+    await tester.enterText(find.byKey(_fieldKey), '大阪');
+    await tester.pump();
+
+    // 「大阪」の取得が始まる前に、「東京」の応答が届く
+    search.respond('東京', ['東京都千代田区']);
+    await tester.pump();
+    expect(find.text('東京都千代田区'), findsNothing);
+    expect(search.queries, ['東京']);
+
+    await tester.pump(suggestionDebounce);
+    search.respond('大阪', ['大阪府大阪市']);
+    await tester.pump();
+    expect(find.text('大阪府大阪市'), findsOneWidget);
+  });
+
+  testWidgets('候補が出ているときに入力を変えたら、前の候補をすぐに消す', (tester) async {
+    final search = _FakeSearch();
+    await _pump(tester, search);
+    await _type(tester, '東京');
+    search.respond('東京', ['東京都千代田区']);
+    await tester.pump();
+    expect(find.text('東京都千代田区'), findsOneWidget);
+
+    await tester.enterText(find.byKey(_fieldKey), '大阪');
+    await tester.pump();
+    expect(find.text('東京都千代田区'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await tester.pump(suggestionDebounce);
+    expect(search.queries, ['東京', '大阪']);
   });
 
   testWidgets('↓ で最初の候補へ移り、Enter で選べる', (tester) async {

@@ -101,8 +101,13 @@ class _SuggestionFieldState<T> extends State<SuggestionField<T>> {
   /// 応答が前後して届いても、古い入力の結果は捨てるための番号
   int _requestId = 0;
 
-  /// 入力欄の文字のうち、すでに扱った検索文字。カーソルの移動だけでは取得し直さない
-  String _handledQuery = '';
+  /// 入力欄の文字のうち、すでに扱った検索文字。カーソルの移動だけでは取得し直さない。
+  /// null は「扱った検索文字が無い」（次に確定した文字で、必ず取得し直す）
+  String? _handledQuery = '';
+
+  /// 候補の行から入力欄へフォーカスを戻している途中（[SuggestionField.searchOnFocus] でも、
+  /// 閉じたばかりの一覧を開き直さない）
+  bool _skipFocusSearch = false;
 
   /// 候補を選んだ処理の途中（呼び出し側が入力欄を書き換えても、取得を始めない）
   bool _selecting = false;
@@ -160,7 +165,12 @@ class _SuggestionFieldState<T> extends State<SuggestionField<T>> {
     final value = widget.controller.value;
     if (value.composing.isValid && !value.composing.isCollapsed) {
       // 変換中。確定するまで取得しない（未確定のひらがなで API を呼ばない）
-      _debounce?.cancel();
+      if (_debounce?.isActive ?? false) {
+        // 待っていた取得を取りやめたので、その検索文字は「扱っていない」に戻す。
+        // 変換を取り消して同じ文字に戻ったときに、取得し直せるようにする
+        _debounce!.cancel();
+        _handledQuery = null;
+      }
       return;
     }
     final query = _queryOf(value.text);
@@ -171,11 +181,25 @@ class _SuggestionFieldState<T> extends State<SuggestionField<T>> {
       _close();
       return;
     }
+    // 前の検索文字の候補は、もう選ばせない。取得中の応答は捨て、
+    // 出ている一覧は「取得中」に切り替える（閉じると、1文字ごとに一覧が出たり消えたりする）
+    _requestId++;
+    if (_status != _Status.idle) {
+      setState(() {
+        _status = _Status.loading;
+        _items = const [];
+      });
+    }
     _debounce = Timer(suggestionDebounce, () => _load(query));
   }
 
   void _onFocusChanged() {
-    if (!_focusNode.hasFocus || !widget.searchOnFocus) return;
+    if (!_focusNode.hasFocus) return;
+    if (_skipFocusSearch) {
+      _skipFocusSearch = false;
+      return;
+    }
+    if (!widget.searchOnFocus) return;
     if (_status != _Status.idle || (_debounce?.isActive ?? false)) return;
     final query = _queryOf(widget.controller.text);
     if (query.isNotEmpty) _load(query);
@@ -219,10 +243,17 @@ class _SuggestionFieldState<T> extends State<SuggestionField<T>> {
       _selecting = false;
       _handledQuery = _queryOf(widget.controller.text);
     }
-    // 候補の行は消えるので、フォーカスを入力欄に戻す（キーボード操作を続けられるように）
+    _focusField();
+  }
+
+  /// 候補の行は消えるので、フォーカスを入力欄に戻す（キーボード操作を続けられるように）。
+  void _focusField() {
+    if (_focusNode.hasFocus) return;
+    _skipFocusSearch = true;
     _focusNode.requestFocus();
   }
 
+  /// 入力欄と候補の行の、どちらにフォーカスがあっても呼ばれる。
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent || _status == _Status.idle) {
       return KeyEventResult.ignored;
@@ -230,9 +261,11 @@ class _SuggestionFieldState<T> extends State<SuggestionField<T>> {
     if (event.logicalKey == LogicalKeyboardKey.escape) {
       _debounce?.cancel();
       _close();
+      _focusField();
       return KeyEventResult.handled;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+        _focusNode.hasPrimaryFocus &&
         _status == _Status.loaded &&
         _items.isNotEmpty) {
       // 入力欄の次に並んでいるのが、最初の候補
@@ -244,29 +277,34 @@ class _SuggestionFieldState<T> extends State<SuggestionField<T>> {
 
   @override
   Widget build(BuildContext context) {
+    // キー操作は、入力欄と候補の行の両方から受け取る（候補の行にいても Esc で閉じられる）
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: _onKey,
+      child: _buildContent(),
+    );
+  }
+
+  Widget _buildContent() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Focus(
-          canRequestFocus: false,
-          skipTraversal: true,
-          onKeyEvent: _onKey,
-          child: Semantics(
-            label: widget.semanticLabel,
-            child: TextField(
-              key: widget.fieldKey,
-              controller: widget.controller,
-              focusNode: _focusNode,
-              maxLength: widget.maxLength,
-              decoration: InputDecoration(
-                hintText: widget.hintText,
-                counterText: '',
-              ),
-              onChanged: widget.onChanged,
-              onSubmitted: widget.onSubmitted == null
-                  ? null
-                  : (_) => widget.onSubmitted!(),
+        Semantics(
+          label: widget.semanticLabel,
+          child: TextField(
+            key: widget.fieldKey,
+            controller: widget.controller,
+            focusNode: _focusNode,
+            maxLength: widget.maxLength,
+            decoration: InputDecoration(
+              hintText: widget.hintText,
+              counterText: '',
             ),
+            onChanged: widget.onChanged,
+            onSubmitted: widget.onSubmitted == null
+                ? null
+                : (_) => widget.onSubmitted!(),
           ),
         ),
         if (_status != _Status.idle)
