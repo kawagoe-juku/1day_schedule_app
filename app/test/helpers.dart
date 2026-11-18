@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:ai_schedule_app/api/api_client.dart';
 import 'package:ai_schedule_app/app.dart';
 import 'package:ai_schedule_app/auth/session_controller.dart';
@@ -29,10 +31,61 @@ class TestEnvironment {
   /// true の間、`GET /api/config` を失敗させる
   bool configUnavailable = false;
 
-  /// `GET /api/profile` を、このステータスの失敗にする（401：トークンの失効、500：サーバの障害）
+  /// `/api/profile`（取得・保存とも）を、このステータスの失敗にする（401：トークンの失効、500：サーバの障害）
   int? profileFailureStatus;
 
+  /// サーバにあるプロファイルの、よく使う駅
+  List<Map<String, Object?>> frequentStations = [];
+
+  /// `GET /api/geo/address-suggestions` が返す候補
+  List<Map<String, Object?>> addressSuggestions = [];
+
+  /// `GET /api/geo/station-suggestions` が返す候補
+  List<Map<String, Object?>> stationSuggestions = [];
+
+  /// true の間、候補の API（住所・駅名）を 502 にする
+  bool suggestionsUnavailable = false;
+
+  /// `PUT /api/profile` を、この応答（ステータスと本文）の失敗にする
+  (int, Map<String, Object?>)? profileSaveFailure;
+
+  /// `PUT /api/profile` で最後に保存された内容（保存されていなければ null）
+  Map<String, Object?>? savedProfile;
+
   late final FakeHttpAdapter server = FakeHttpAdapter(_respond);
+
+  /// [path] への呼び出し（呼ばれた順）。
+  List<RequestOptions> requestsTo(String path, {String method = 'GET'}) => [
+    for (final request in server.requests)
+      if (request.uri.path == path && request.method == method) request,
+  ];
+
+  Map<String, Object?> _profile() => {
+    'email': testEmail,
+    'onboardingCompleted': onboardingCompleted,
+    'homeAddress': savedProfile?['homeAddress'],
+    'homeLocation': savedProfile == null
+        ? null
+        : {'lat': 35.681236, 'lng': 139.767125},
+    'frequentStations': savedProfile?['frequentStations'] ?? frequentStations,
+    'walkingSpeed': savedProfile?['walkingSpeed'] ?? 'normal',
+    'preparationTimeMinutes': savedProfile?['preparationTimeMinutes'] ?? 30,
+    'priorityCondition': savedProfile?['priorityCondition'] ?? 'on_time',
+    'termsAcceptedAt': savedProfile?['acceptTerms'] == true
+        ? '2026-11-11T12:00:00+09:00'
+        : null,
+  };
+
+  ResponseBody _suggestions(List<Map<String, Object?>> items) =>
+      suggestionsUnavailable
+      ? FakeHttpAdapter.jsonResponse(502, {
+          'error': {
+            'code': 'EXTERNAL_SERVICE_ERROR',
+            'message': '外部サービスの呼び出しに失敗しました',
+            'requestId': 'req-3',
+          },
+        })
+      : FakeHttpAdapter.jsonResponse(200, {'items': items});
 
   ResponseBody _respond(RequestOptions options) {
     switch (options.uri.path) {
@@ -69,17 +122,20 @@ class TestEnvironment {
             },
           });
         }
-        return FakeHttpAdapter.jsonResponse(200, {
-          'email': testEmail,
-          'onboardingCompleted': onboardingCompleted,
-          'homeAddress': null,
-          'homeLocation': null,
-          'frequentStations': <Object?>[],
-          'walkingSpeed': 'normal',
-          'preparationTimeMinutes': 30,
-          'priorityCondition': 'on_time',
-          'termsAcceptedAt': null,
-        });
+        if (options.method == 'PUT') {
+          if (profileSaveFailure case (final status, final body)?) {
+            return FakeHttpAdapter.jsonResponse(status, body);
+          }
+          final body = (jsonDecode(options.data as String) as Map)
+              .cast<String, Object?>();
+          savedProfile = body;
+          if (body['completeOnboarding'] == true) onboardingCompleted = true;
+        }
+        return FakeHttpAdapter.jsonResponse(200, _profile());
+      case '/api/geo/address-suggestions':
+        return _suggestions(addressSuggestions);
+      case '/api/geo/station-suggestions':
+        return _suggestions(stationSuggestions);
     }
     return FakeHttpAdapter.jsonResponse(404, null);
   }

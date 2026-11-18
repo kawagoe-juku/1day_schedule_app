@@ -16,7 +16,13 @@ class FormFieldFrame extends StatelessWidget {
     required this.child,
     this.required = false,
     this.errorText,
+    this.labelsChild = true,
+    this.footer,
   });
+
+  /// 入力欄に付ける読み上げ用の名前。必須なら「（必須）」を付ける。
+  static String semanticLabelOf(String label, {bool required = false}) =>
+      required ? '$label（必須）' : label;
 
   final String label;
 
@@ -28,6 +34,15 @@ class FormFieldFrame extends StatelessWidget {
 
   /// 入力欄
   final Widget child;
+
+  /// [child] 全体に読み上げ用の名前を付けるか。
+  ///
+  /// [child] が入力欄のほかに補足や一覧を含むときは false にし、入力欄そのものに
+  /// [semanticLabelOf] の名前を付ける（全体に付けると、入力欄に名前が付かなくなる）。
+  final bool labelsChild;
+
+  /// 入力エラーの下に出すもの（補足の文など）。入力エラーは、必ず入力欄のすぐ下に出す
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -54,8 +69,15 @@ class FormFieldFrame extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           // 入力欄そのものに名前を付ける。スクリーンリーダーで入力欄に直接移っても、何の項目か分かる
-          Semantics(label: required ? '$label（必須）' : label, child: child),
+          if (labelsChild)
+            Semantics(
+              label: semanticLabelOf(label, required: required),
+              child: child,
+            )
+          else
+            child,
           if (errorText != null) FieldErrorText(errorText),
+          if (footer case final footer?) ...[const SizedBox(height: 4), footer],
         ],
       ),
     );
