@@ -65,6 +65,7 @@
 | clarification_question | 確認質問 | varchar(255) | YES | NULL | 確認質問中のみ |
 | assumptions | 仮定した内容 | jsonb | NO | `'[]'` | 文字列の配列 |
 | warnings | 注意 | jsonb | NO | `'[]'` | 文字列の配列 |
+| draft | 下書き | jsonb | YES | NULL | 途中経過と、作り直しに必要な情報（用事・立寄り・選んだ店・確認の内容）。品目名・入力の原文は入れない。対象日を過ぎたら日次バッチで NULL にする |
 | created_at | 作成日時 | timestamptz | NO | now() | |
 | updated_at | 更新日時 | timestamptz | NO | now() | |
 
@@ -91,6 +92,7 @@
 | station_exit | 駅出口 | varchar(255) | YES | NULL | |
 | boarding_position | 乗車位置 | varchar(255) | YES | NULL | |
 | description | 説明 | varchar(500) | YES | NULL | |
+| source_id | 元の ID | varchar(16) | YES | NULL | 元になった用事・立寄りの ID（下書きの中の ID。e1・s2 など）。API の sourceId |
 | created_at | 作成日時 | timestamptz | NO | now() | |
 | updated_at | 更新日時 | timestamptz | NO | now() | |
 

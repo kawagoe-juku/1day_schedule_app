@@ -18,8 +18,12 @@ import {
 import { CognitoTokenRejectedError, type CognitoUserClient } from './adapters/cognito.js';
 import type { ExternalClients } from './adapters/index.js';
 import { geoRoutes } from './routes/geo.js';
+import { toLoggableError } from './logging.js';
 import { RateLimitedError } from './rate-limit.js';
+
+export { toLoggableError };
 import { healthRoutes } from './routes/health.js';
+import { planRoutes, type PlanRouteOptions } from './routes/plans.js';
 import { profileRoutes, type ProfileStore } from './routes/profile.js';
 import { sessionRoutes } from './routes/session.js';
 
@@ -52,27 +56,6 @@ function toField(instancePath: string, params: Record<string, unknown> | undefin
 }
 
 /**
- * 想定外の例外を、ログに出してよい形にする。
- * DB の失敗（Drizzle の例外）は、メッセージに SQL へ渡した値（住所・座標など）が入るため、
- * そのままは出さない。SQL の文（値は $1 などの記号）と、PostgreSQL のエラーコードだけを残す。
- */
-export function toLoggableError(error: unknown): Record<string, unknown> {
-  if (error instanceof Error && 'query' in error && 'params' in error) {
-    const cause: unknown = error.cause;
-    return {
-      dbError: {
-        type: error.name,
-        query: typeof error.query === 'string' ? error.query : undefined,
-        // 23505（一意制約）などのコード。メッセージと detail には値が入り得るので出さない
-        code: cause instanceof Error && 'code' in cause ? cause.code : undefined,
-        causeType: cause instanceof Error ? cause.name : undefined,
-      },
-    };
-  }
-  return { err: error };
-}
-
-/**
  * ログの設定。要求ログの URL はパスだけにする（住所サジェストの q、OAuth の code・state などを残さない）。
  * 認証情報も出さない（既定の要求ログはヘッダーを出さないが、出力項目を増やしたときの保険）。
  */
@@ -98,6 +81,8 @@ export interface BuildAppOptions {
   external?: ExternalClients;
   /** Cognito から利用者の情報を取得するクライアント。Cognito が未設定なら渡さない */
   cognito?: CognitoUserClient;
+  /** 計画の API（/agent/plans）が使うもの。DB・AI・Google Maps が未設定なら、計画の API は 500 を返す */
+  plans?: PlanRouteOptions;
   logger?: FastifyServerOptions['logger'];
 }
 
@@ -108,6 +93,7 @@ export async function buildApp({
   users,
   external = {},
   cognito,
+  plans = {},
   logger,
 }: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
@@ -202,6 +188,7 @@ export async function buildApp({
   await app.register(sessionRoutes);
   await app.register(profileRoutes, { users, cognito, googleMaps: external.googleMaps });
   await app.register(geoRoutes, { googleMaps: external.googleMaps, navitime: external.navitime });
+  await app.register(planRoutes, plans);
 
   return app;
 }

@@ -37,8 +37,8 @@ class PlanItem {
     this.boardingPosition,
     this.store,
 
-    /// この立寄りで買う品目（メモ・入力から抽出。DBには保存しない）
-    this.purchaseItems,
+    /// 元になった用事・立寄りの ID（品目の突き合わせ、項目の削除に使う）
+    this.sourceId,
     this.additionalProperties = const {},
   });
 
@@ -74,11 +74,7 @@ class PlanItem {
     store: json.containsKey("store")
         ? Store.fromJson(json["store"] as Map<String, Object?>)
         : null,
-    purchaseItems: json.containsKey("purchaseItems")
-        ? (json["purchaseItems"] as List<Object?>)
-              .map((item) => item as String)
-              .toList()
-        : null,
+    sourceId: json.containsKey("sourceId") ? json["sourceId"] as String : null,
     additionalProperties: {
       for (final entry in json.entries)
         if (!_knownKeys.contains(entry.key)) entry.key: entry.value,
@@ -121,8 +117,8 @@ class PlanItem {
 
   final Store? store;
 
-  /// この立寄りで買う品目（メモ・入力から抽出。DBには保存しない）
-  final List<String>? purchaseItems;
+  /// 元になった用事・立寄りの ID（品目の突き合わせ、項目の削除に使う）
+  final String? sourceId;
 
   static const _knownKeys = <String>{
     "id",
@@ -140,7 +136,7 @@ class PlanItem {
     "stationExit",
     "boardingPosition",
     "store",
-    "purchaseItems",
+    "sourceId",
   };
 
   final Map<String, Object?> additionalProperties;
@@ -165,7 +161,6 @@ class PlanItem {
     if (this.boardingPosition != null)
       "boardingPosition": this.boardingPosition,
     if (this.store != null) "store": this.store?.toJson(),
-    if (this.purchaseItems != null)
-      "purchaseItems": this.purchaseItems?.map((item) => item).toList(),
+    if (this.sourceId != null) "sourceId": this.sourceId,
   };
 }

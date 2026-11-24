@@ -1,6 +1,7 @@
 import { createCognitoUserClient } from './adapters/cognito.js';
 import { createExternalClients } from './adapters/index.js';
 import { createEmfMetrics } from './adapters/metrics.js';
+import { createAi } from './agent/ai.js';
 import { buildApp, toLoggableError } from './app.js';
 import { loadConfig } from './config.js';
 import { createDb } from './db/client.js';
@@ -22,15 +23,27 @@ const db = config.DATABASE_URL
       onError: (err) => app.log.warn({ err }, 'db connection failed'),
     })
   : undefined;
+// 計画生成では、全体の期限（13 秒）に収めるため、外部 API を短いタイムアウト・リトライなしで呼ぶ
+const agentClients = createExternalClients(config, { timeoutMs: 2500, retries: 0 });
+const metrics = createEmfMetrics({ stage: config.APP_STAGE });
+
 const app = await buildApp({
   config,
   db,
+  plans: {
+    db: db?.db,
+    ai: config.BEDROCK_MODEL_ID
+      ? createAi({ modelId: config.BEDROCK_MODEL_ID, region: config.AWS_REGION, metrics })
+      : undefined,
+    googleMaps: agentClients.googleMaps,
+    navitime: agentClients.navitime,
+  },
   users: db ? userRepository(db.db) : undefined,
   external: createExternalClients(config),
   cognito: config.COGNITO_USER_POOL_ID
     ? createCognitoUserClient({
         userPoolId: config.COGNITO_USER_POOL_ID,
-        metrics: createEmfMetrics({ stage: config.APP_STAGE }),
+        metrics,
       })
     : undefined,
 });

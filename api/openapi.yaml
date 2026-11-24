@@ -129,8 +129,12 @@ paths:
       operationId: createPlan
       summary: 自然文から行動計画を生成する
       description: |
-        必須情報が不足する場合は `status=clarifying` と確認質問を返す（最大2回）。
-        1人1日20回の生成上限を超えると `429 RATE_LIMITED`。
+        一日の計画を作る。対象日は今日か明日（それ以外の日付は `400`）。
+        利用者の確認が必要な場合は `status=clarifying` と確認（`clarification`）を返す。確認は3種類：
+        予定の一覧（`selection`。1回だけ。質問回数に数えない）、場所の候補（`place`）、質問（`question`）。
+        場所の候補と質問は、合わせて最大2回。
+        生成回数は、計画が初めて `completed` になったときに数える。1人1日20回の上限に達していると `429 RATE_LIMITED`。
+        自宅が未設定なら `409`（`details[].field` = `HOME_NOT_SET`）。
         サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
       requestBody:
         required: true
@@ -149,6 +153,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/RateLimited'
         '502':
@@ -181,8 +187,10 @@ paths:
       operationId: answerClarification
       summary: 確認質問に回答して生成を続ける
       description: |
-        `status=clarifying` の計画にのみ有効。2回目の回答後も情報が不足する場合は、
-        仮定（`assumptions`）を明示して計画を完成させる。
+        `status=clarifying` の計画にのみ有効。回答には、確認の番号（`clarification.token`）を付ける（合わなければ `409`）。
+        必要な項目は、確認の種類で決まる：予定の一覧は `selectedIds`（と `places`・`homeBetween`）、
+        場所の候補は `selectedIds`（1件）または `answer`、質問は `answer`。
+        質問が2回に達したあとも情報が不足する場合は、仮定（`assumptions`）を明示して計画を完成させる。
         サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
       requestBody:
         required: true
@@ -932,7 +940,11 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: 現在の状態では実行できない（例：確認質問中でない計画への回答）（code=CONFLICT）
+      description: |
+        現在の状態では実行できない（code=CONFLICT）。理由は `details[].field` に入る：
+        `HOME_NOT_SET`（自宅が未設定）／`STATE_MISMATCH`（計画の状態が違う。例：確認中でない計画への回答）／
+        `TOKEN_MISMATCH`（確認の番号が違う）／`PLAN_EXPIRED`（対象日を過ぎた）／
+        `NOT_DELETABLE`（削除できない項目）／`CONCURRENT_UPDATE`（同時に更新された）
       content:
         application/json:
           schema:
@@ -1126,13 +1138,55 @@ components:
             ['東京駅に13時に待ち合わせがあります。カレーの食材と排水口のネットを買いたいです。']
     ClarifyRequest:
       type: object
-      required: [answer]
+      required: [token]
       additionalProperties: false
+      description: どの項目が必要かは、確認の種類（`clarification.kind`）で決まる。サーバが検証する
       properties:
+        token:
+          type: integer
+          description: 回答する確認の番号（`clarification.token`）
         answer:
           type: string
           minLength: 1
           maxLength: 500
+          description: 自由入力（質問への回答、場所の入力）
+        selectedIds:
+          type: array
+          maxItems: 20
+          description: 予定の一覧で選んだ用事・立寄りの ID、または場所の候補で選んだ ID（1件）
+          items:
+            type: string
+            maxLength: 32
+        places:
+          type: array
+          maxItems: 20
+          description: 予定の一覧で、迎え方を選ぶ予定（`needsPlace`）ごとの指定。指定の無い予定は「自宅で」
+          items:
+            type: object
+            required: [id, at]
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+                maxLength: 32
+              at:
+                type: string
+                enum: [home, stay, place]
+                description: 'home=自宅で迎える / stay=外出先で迎える（直前の用事の場所） / place=場所を入力（text が必須）'
+              text:
+                type: string
+                minLength: 1
+                maxLength: 100
+        homeBetween:
+          type: array
+          maxItems: 5
+          description: |
+            「いったん帰宅する」を選んだ空き（空きの直前の用事の ID）。
+            空きの選択肢は画面が計算する：選んだ用事を開始の順に並べ、終了から次の開始までが
+            `limits.gapMinutes` 以上なら選択肢を出す。条件に合わない指定は、サーバが無視する
+          items:
+            type: string
+            maxLength: 32
     ReviseRequest:
       type: object
       required: [instruction]
@@ -1184,7 +1238,7 @@ components:
         targetDate:
           type: string
           format: date
-          description: 計画の対象日（当日・日本時間）
+          description: 計画の対象日（今日または明日・日本時間）
         departureTime:
           description: 自宅の出発時刻（completed時）
           oneOf:
@@ -1195,8 +1249,24 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DateTime'
             - type: 'null'
+        purchaseItems:
+          type: array
+          description: |
+            立寄りごとの買う品目（入力・メモから抽出）。サーバには保存しないので、入力を読み取った応答
+            （計画の生成と修正）にだけ入る。画面が計画の ID と立寄りの ID（`PlanItem.sourceId`）で保持する
+          items:
+            type: object
+            required: [sourceId, items]
+            properties:
+              sourceId:
+                type: string
+                description: 立寄りの ID
+              items:
+                type: array
+                items:
+                  type: string
         clarification:
-          description: 確認質問（clarifying時のみ）
+          description: 確認（clarifying時のみ）
           oneOf:
             - $ref: '#/components/schemas/Clarification'
             - type: 'null'
@@ -1223,19 +1293,78 @@ components:
           $ref: '#/components/schemas/DateTime'
     Clarification:
       type: object
-      required: [question, count, maxCount]
+      required: [kind, token, question, count, maxCount, options, allowFreeText]
       properties:
+        kind:
+          type: string
+          enum: [selection, place, question]
+          description: 'selection=予定の一覧 / place=場所の候補 / question=質問'
+        token:
+          type: integer
+          description: 確認の番号。回答（ClarifyRequest.token）に同じ値を入れる
         question:
           type: string
-          examples: ['何時までに渋谷に着けばよいですか？']
+          examples: ['打ち合わせの場所と、何時ごろまでかを教えてください']
         count:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 2
-          description: 何回目の確認質問か
+          description: 何回目の質問か（予定の一覧は数えないので、そのときまでの回数）
         maxCount:
           type: integer
           const: 2
+        options:
+          type: array
+          description: 選択肢（予定の一覧は用事と立寄り、場所の候補は場所）。質問のときは空
+          items:
+            $ref: '#/components/schemas/ClarificationOption'
+        limits:
+          description: 予定の一覧で選べる件数など（selection のときだけ）
+          type: object
+          required: [maxErrands, maxStops, minTotal, gapMinutes]
+          properties:
+            maxErrands:
+              type: integer
+            maxStops:
+              type: integer
+            minTotal:
+              type: integer
+              description: 用事と立寄りを合わせた最小の件数
+            gapMinutes:
+              type: integer
+              description: 「いったん帰宅する」の選択肢を出す空きの長さ（分）
+        allowFreeText:
+          type: boolean
+          description: 自由入力（answer）で回答できるか
+    ClarificationOption:
+      type: object
+      required: [id, group, label]
+      properties:
+        id:
+          type: string
+        group:
+          type: string
+          enum: [errand, stop, place]
+        label:
+          type: string
+          description: 用事の件名、立寄りの種類、場所の名称
+        detail:
+          type: string
+          description: 用事の場所、場所の住所
+        source:
+          type: string
+          enum: [input, calendar, routine]
+          description: 用事の出どころ（errand のときだけ）
+        startTime:
+          $ref: '#/components/schemas/DateTime'
+        endTime:
+          $ref: '#/components/schemas/DateTime'
+        selected:
+          type: boolean
+          description: 初期値で選択されているか（selection のときだけ）
+        needsPlace:
+          type: boolean
+          description: 迎え方（自宅で／外出先で／場所を入力）の選択が要る予定
     GenerationQuota:
       type: object
       required: [used, limit, resetAt]
@@ -1290,11 +1419,9 @@ components:
           examples: ['3号車付近']
         store:
           $ref: '#/components/schemas/Store'
-        purchaseItems:
-          type: array
-          description: この立寄りで買う品目（メモ・入力から抽出。DBには保存しない）
-          items:
-            type: string
+        sourceId:
+          type: string
+          description: 元になった用事・立寄りの ID（品目の突き合わせ、項目の削除に使う）
     Route:
       type: object
       required: [durationMinutes, steps]

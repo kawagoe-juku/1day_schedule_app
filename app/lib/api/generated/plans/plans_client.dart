@@ -16,8 +16,12 @@ class PlansClient {
 
   /// 自然文から行動計画を生成する
   ///
-  /// 必須情報が不足する場合は `status=clarifying` と確認質問を返す（最大2回）。
-  /// 1人1日20回の生成上限を超えると `429 RATE_LIMITED`。
+  /// 一日の計画を作る。対象日は今日か明日（それ以外の日付は `400`）。
+  /// 利用者の確認が必要な場合は `status=clarifying` と確認（`clarification`）を返す。確認は3種類：
+  /// 予定の一覧（`selection`。1回だけ。質問回数に数えない）、場所の候補（`place`）、質問（`question`）。
+  /// 場所の候補と質問は、合わせて最大2回。
+  /// 生成回数は、計画が初めて `completed` になったときに数える。1人1日20回の上限に達していると `429 RATE_LIMITED`。
+  /// 自宅が未設定なら `409`（`details[].field` = `HOME_NOT_SET`）。
   /// サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
   Future<models.Plan> createPlan({
     Map<String, Object?> extra = const {
@@ -108,8 +112,10 @@ class PlansClient {
 
   /// 確認質問に回答して生成を続ける
   ///
-  /// `status=clarifying` の計画にのみ有効。2回目の回答後も情報が不足する場合は、
-  /// 仮定（`assumptions`）を明示して計画を完成させる。
+  /// `status=clarifying` の計画にのみ有効。回答には、確認の番号（`clarification.token`）を付ける（合わなければ `409`）。
+  /// 必要な項目は、確認の種類で決まる：予定の一覧は `selectedIds`（と `places`・`homeBetween`）、
+  /// 場所の候補は `selectedIds`（1件）または `answer`、質問は `answer`。
+  /// 質問が2回に達したあとも情報が不足する場合は、仮定（`assumptions`）を明示して計画を完成させる。
   /// サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
   Future<models.Plan> answerClarification({
     Map<String, Object?> extra = const {

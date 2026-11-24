@@ -102,6 +102,8 @@ export const plan = pgTable(
     clarificationQuestion: varchar({ length: 255 }),
     assumptions: jsonb().$type<string[]>().notNull().default([]),
     warnings: jsonb().$type<string[]>().notNull().default([]),
+    /** 途中経過と、作り直しに必要な情報（agent/draft.ts の Draft）。対象日を過ぎたら日次バッチで NULL にする */
+    draft: jsonb().$type<unknown>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -137,6 +139,8 @@ export const planItem = pgTable(
     stationExit: varchar({ length: 255 }),
     boardingPosition: varchar({ length: 255 }),
     description: varchar({ length: 500 }),
+    /** 元になった用事・立寄りの ID（下書きの中の ID。e1・s2 など） */
+    sourceId: varchar({ length: 16 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
