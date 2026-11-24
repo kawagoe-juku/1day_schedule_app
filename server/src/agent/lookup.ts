@@ -155,7 +155,7 @@ export async function findStores(
 const WALK_KMH = { slow: 3.6, normal: 4.8, fast: 6.0 };
 /** 道のりは直線より長いので、概算では直線距離を割り増す */
 const DETOUR = 1.3;
-/** これより近ければ、経路を探さず徒歩の概算にする */
+/** 電車・徒歩の計画で、これより近ければ、経路を探さず徒歩の概算にする */
 const NEARBY_METERS = 300;
 /** 乗換の経路が取れないとき、これより近ければ徒歩の経路にする */
 const WALKABLE_METERS = 1500;
@@ -277,7 +277,9 @@ export function createTravel(
 
   return async (request) => {
     const distance = distanceMeters(request.from, request.to);
-    if (distance <= NEARBY_METERS) return rough('walk', distance, false);
+    // 近ければ、経路を探さず徒歩の概算にする（車・自転車は、乗り物を置いていけないので対象外）
+    const onFoot = request.mode === 'train' || request.mode === 'walk';
+    if (onFoot && distance <= NEARBY_METERS) return rough('walk', distance, false);
     if (request.offline) return rough(request.mode, distance, true);
     if (request.mode !== 'train') {
       return (await byRoad(request, request.mode)) ?? rough(request.mode, distance, true);

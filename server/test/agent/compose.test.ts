@@ -70,7 +70,7 @@ const stop = (
 ): ComposeStop => ({ id, category, anchor, when, options });
 
 const input = (overrides: Partial<ComposeInput> = {}): ComposeInput => ({
-  now: at('09:00'),
+  now: at('08:00'),
   date: DATE,
   home: HOME,
   mode: 'train',
@@ -292,10 +292,11 @@ describe('composePlan：立寄り', () => {
 
 describe('composePlan：買い物だけ', () => {
   const stops = [stop('s1', 'home', 'before', [store('店A', HOME)])];
+  const now = at('09:00');
 
   it('今日は「現在＋準備時間」に出て、自宅 → 店 → 自宅', async () => {
     const { travel, requests } = fakeTravel();
-    const plan = await composePlan(input({ errands: [], stops }), travel);
+    const plan = await composePlan(input({ now, errands: [], stops }), travel);
     expect(lines(plan.items)).toEqual([
       '09:30 departure DEPARTURE 自宅を出発',
       '09:30 move OUTBOUND 徒歩で店Aへ',
@@ -309,7 +310,7 @@ describe('composePlan：買い物だけ', () => {
 
   it('明日は 10:00 に出ると仮定する。時刻の指定があれば、その時刻に出る', async () => {
     const { travel } = fakeTravel();
-    const tomorrow = input({ errands: [], stops, date: '2026-11-26' });
+    const tomorrow = input({ now, errands: [], stops, date: '2026-11-26' });
     const assumed = await composePlan(tomorrow, travel);
     expect(assumed.departure).toEqual(at('10:00', '2026-11-26'));
     expect(assumed.assumptions).toEqual(['出発を 10:00 と仮定しました']);
@@ -321,7 +322,10 @@ describe('composePlan：買い物だけ', () => {
 
   it('指定の時刻が過ぎていれば、「現在＋準備時間」に出る', async () => {
     const { travel } = fakeTravel();
-    const plan = await composePlan(input({ errands: [], stops, shoppingTime: '08:00' }), travel);
+    const plan = await composePlan(
+      input({ now, errands: [], stops, shoppingTime: '08:00' }),
+      travel,
+    );
     expect(plan.departure).toEqual(at('09:30'));
   });
 
@@ -332,12 +336,12 @@ describe('composePlan：買い物だけ', () => {
       name: undefined,
       location: undefined,
     });
-    const none = await composePlan(input({ errands: [home] }), travel);
+    const none = await composePlan(input({ now, errands: [home] }), travel);
     expect(lines(none.items)).toEqual(['09:30 errand MAIN 用事e1']);
     expect(none.departure).toBeUndefined();
     expect(none.items[0]?.locationName).toBe('自宅');
 
-    const overlapping = await composePlan(input({ errands: [home], stops }), travel);
+    const overlapping = await composePlan(input({ now, errands: [home], stops }), travel);
     expect(overlapping.warnings).toEqual(['「用事e1」の時間に、外出が重なっています']);
   });
 });
@@ -499,17 +503,19 @@ describe('composePlan：うまくいかない場合', () => {
     );
     expect(plan.items.some((i) => i.itemType === 'stopover')).toBe(false);
     expect(plan.warnings).toEqual(['移動の時間が足りないため、「店E」への立寄りを外しました']);
-    expect(lines(plan.items)[3]).toBe('11:18 move MAIN 電車で新宿駅へ');
+    // 前の用事が終わったら（11:00）すぐ出る便に乗る
+    expect(lines(plan.items)[3]).toBe('11:03 move MAIN 電車で新宿駅へ');
   });
 
-  it('立寄りが無くても足りなければ、足りない分数を注意に出す（遅れの波及は再計算しない）', async () => {
+  it('立寄りが無くても足りなければ、前の用事の終了に出る便で時刻を置き、遅れを注意に出す', async () => {
     const { travel } = fakeTravel();
     const plan = await composePlan(
       input({ errands: [errand('e1', '10:00', '11:00'), errand('e2', '11:30', '12:00')] }),
       travel,
     );
-    // 11:20 に着くには 10:48 発。用事e1 は 11:00 まで
-    expect(plan.warnings).toEqual(['「用事e1」から「用事e2」への移動時間が、約12分足りません']);
+    // 11:20 に着くには 10:48 発だが、用事e1 は 11:00 まで。11:03 発・11:33 着になる
+    expect(plan.warnings).toEqual(['「用事e2」に、約3分遅れる見込みです']);
+    expect(lines(plan.items)[3]).toBe('11:03 move MAIN 電車で新宿駅へ');
   });
 
   it('用事どうしが重なっていても計画を作り、注意を出す', async () => {
@@ -518,7 +524,10 @@ describe('composePlan：うまくいかない場合', () => {
       input({ errands: [errand('e1', '10:00', '12:00'), errand('e2', '11:00', '13:00')] }),
       travel,
     );
-    expect(plan.warnings).toEqual(['「用事e1」と「用事e2」の時間が重なっています']);
+    expect(plan.warnings).toEqual([
+      '「用事e1」と「用事e2」の時間が重なっています',
+      '「用事e2」に、約93分遅れる見込みです',
+    ]);
     expect(plan.items.filter((i) => i.itemType === 'errand')).toHaveLength(2);
   });
 
@@ -671,7 +680,10 @@ describe('composePlan：レビューで見つかった境界', () => {
       }),
       travel,
     );
-    expect(plan.warnings).toEqual(['「用事s」と「用事e2」の時間が重なっています']);
+    expect(plan.warnings).toEqual([
+      '「用事s」と「用事e2」の時間が重なっています',
+      '「用事e2」に、約63分遅れる見込みです',
+    ]);
   });
 
   it('隣どうしでない用事の重なりも、注意に出す', async () => {
@@ -728,12 +740,14 @@ describe('composePlan：レビューで見つかった境界', () => {
     expect(plan.warnings).toContain('「用事e1」に、約23分遅れる見込みです');
   });
 
-  it('足りないのが余裕の分だけなら、注意を出さない', async () => {
+  it('余裕の分が取れないだけなら、前の用事の終了に出る便にして、注意を出さない', async () => {
     const { travel } = fakeTravel();
     const plan = await composePlan(
       input({ errands: [errand('e1', '10:00', '11:00'), errand('e2', '11:35', '12:00')] }),
       travel,
     );
+    // 逆算（10:53 発）は用事e1 の途中なので使わない。11:03 発・11:33 着
+    expect(lines(plan.items)[3]).toBe('11:03 move MAIN 電車で新宿駅へ');
     expect(plan.warnings).toEqual([]);
   });
 
@@ -793,5 +807,36 @@ describe('composePlan：レビューで見つかった境界', () => {
       travel,
     );
     expect(requests.every((r) => r.mode === 'car')).toBe(true);
+  });
+});
+
+describe('composePlan：出発の確認', () => {
+  it('出発までの時間が準備時間より短いときは、注意を出す（出発は遅らせない）', async () => {
+    const { travel } = fakeTravel();
+    const plan = await composePlan(input({ now: at('12:00') }), travel);
+    expect(plan.departure).toEqual(at('12:18'));
+    expect(plan.warnings).toEqual(['出発まで約18分です。準備の時間が足りない可能性があります']);
+  });
+
+  it('店を替えて取り直したあとに出発が過去になったら、注意を出す', async () => {
+    // 取り直すと、電車が 30 分早くなる
+    let trains = 0;
+    const { travel } = fakeTravel((request) => {
+      if (request.mode !== 'train' || !request.arriveBy) return undefined;
+      trains += 1;
+      const arrival = add(request.arriveBy, trains === 1 ? -2 : -32);
+      return { mode: 'train', minutes: 30, departure: add(arrival, -30), arrival, steps: [] };
+    });
+    const closed = store('閉まっている店', HOME, 0.001, ['12:10', '20:00']);
+    const plan = await composePlan(
+      input({
+        now: at('11:30'),
+        stops: [stop('s1', 'home', 'before', [closed, store('店A', HOME)])],
+      }),
+      travel,
+    );
+    // 1巡目は 11:38 発。取り直すと 11:08 発（現在は 11:30）
+    expect(plan.departure).toEqual(at('11:08'));
+    expect(plan.warnings).toEqual(['自宅を出る時刻（11:08）に、約22分間に合いません']);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGoogleMapsClient, isOpenAt } from '../../src/adapters/google-maps.js';
+import { createGoogleMapsClient, isOpenAt, isOpenDuring } from '../../src/adapters/google-maps.js';
 import type { ExternalApiCall } from '../../src/adapters/metrics.js';
 import { createFakeFetch, hang, json, status } from '../helpers/fake-fetch.js';
 
@@ -368,5 +368,45 @@ describe('isOpenAt', () => {
   it('営業時間の情報が無い場所は undefined（分からない）', () => {
     expect(isOpenAt({}, at('2026-11-20T12:00:00+09:00'))).toBeUndefined();
     expect(isOpenAt({ openingPeriods: [] }, at('2026-11-20T12:00:00+09:00'))).toBe(false);
+  });
+});
+
+describe('isOpenDuring', () => {
+  const time = (hhmm: string, day = 20) => new Date(`2026-11-${day}T${hhmm}:00+09:00`);
+  const period = (open: Date, close?: Date) => ({
+    open: open.toISOString(),
+    close: close?.toISOString(),
+  });
+  const lunchBreak = {
+    openingPeriods: [period(time('11:00'), time('12:20')), period(time('12:40'), time('15:00'))],
+  };
+
+  it('滞在の間ずっと営業していれば true（閉店ちょうどまでの滞在も可）', () => {
+    expect(isOpenDuring(lunchBreak, time('11:00'), time('12:20'))).toBe(true);
+    expect(isOpenDuring(lunchBreak, time('13:00'), time('14:00'))).toBe(true);
+  });
+
+  it('途中で閉まる・休みをまたぐ・開く前に着く場合は false', () => {
+    expect(isOpenDuring(lunchBreak, time('12:00'), time('13:00'))).toBe(false);
+    expect(isOpenDuring(lunchBreak, time('14:30'), time('15:01'))).toBe(false);
+    expect(isOpenDuring(lunchBreak, time('10:59'), time('11:30'))).toBe(false);
+  });
+
+  it('時間帯が続いていれば（日付をまたぐ営業など）、またいでも true', () => {
+    const continuous = {
+      openingPeriods: [
+        period(time('18:00'), time('00:00', 21)),
+        period(time('00:00', 21), time('02:00', 21)),
+      ],
+    };
+    expect(isOpenDuring(continuous, time('23:30'), time('00:30', 21))).toBe(true);
+    expect(isOpenDuring(continuous, time('23:30'), time('02:01', 21))).toBe(false);
+  });
+
+  it('終わりの無い時間帯（24時間営業）は true。営業時間の情報が無ければ undefined', () => {
+    expect(
+      isOpenDuring({ openingPeriods: [period(time('00:00'))] }, time('03:00'), time('04:00')),
+    ).toBe(true);
+    expect(isOpenDuring({}, time('03:00'), time('04:00'))).toBeUndefined();
   });
 });

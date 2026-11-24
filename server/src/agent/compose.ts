@@ -9,7 +9,7 @@
  */
 import {
   distanceMeters,
-  isOpenAt,
+  isOpenDuring,
   type LatLng,
   type OpeningPeriod,
 } from '../adapters/google-maps.js';
@@ -220,7 +220,7 @@ interface State {
   dropped: Set<string>;
   /** 立寄りごとの、使う店の番号 */
   pick: Map<string, number>;
-  /** 「今すぐ出る」に切り替えた区間（base） */
+  /** 「出られる時刻にすぐ出る」に切り替えた区間（base） */
   hurry: Set<string>;
   notes: string[];
 }
@@ -303,7 +303,7 @@ function outline(input: ComposeInput, state: State, shoppingStart: Date) {
     const point = (v?: Visit): Point =>
       v ? { id: v.errand.id, ...places.get(v.errand.id)!, dwell: 0 } : home;
     const time: Pick<Segment, 'arriveBy' | 'departAt'> = hurry
-      ? { departAt: add(input.now, input.preparationMinutes) }
+      ? { departAt: from ? from.end : add(input.now, input.preparationMinutes) }
       : to
         ? { arriveBy: add(to.errand.start, -marginOf(input)) }
         : { departAt: from ? from.end : shoppingStart };
@@ -393,25 +393,24 @@ function review(routed: Routed[], input: ComposeInput, state: State, fix: boolea
     const { seg } = r;
     const next = routed[index + 1];
 
-    // 出発が過去：今すぐ出る経路に切り替え、立寄りを外す
-    if (fix && !seg.source && seg.arriveBy && r.start < input.now) {
-      state.hurry.add(seg.base);
-      drop(seg.points, '出発までの時間が足りない');
-      changed = true;
-      return;
-    }
-    // 用事の間の移動が間に合わない：立寄りを外す。それでも（余裕の分を超えて）足りなければ注意
-    if (seg.source && seg.target && r.start < seg.source.end) {
-      if (fix && seg.points.length > 2) {
-        drop(seg.points, '移動の時間が足りない');
+    // 逆算した出発が、出られる時刻（自宅なら現在、用事ならその終了）より前：
+    // 出られる時刻に出る経路に切り替え、立寄りを外す。取り直したあとも残れば注意
+    const earliest = seg.source?.end ?? input.now;
+    if (seg.arriveBy && r.start < earliest) {
+      if (fix) {
+        state.hurry.add(seg.base);
+        drop(seg.points, seg.source ? '移動の時間が足りない' : '出発までの時間が足りない');
+        changed = true;
         return;
       }
-      const short = minutesBetween(r.start, seg.source.end);
-      if (short > marginOf(input) && seg.target.errand.start >= seg.source.end) {
-        warnings.push(
-          `「${seg.source.errand.title}」から「${seg.target.errand.title}」への移動時間が、約${short}分足りません`,
-        );
-      }
+      warnings.push(
+        `${seg.points[0]!.name}を出る時刻（${hhmm(r.start)}）に、約${minutesBetween(r.start, earliest)}分間に合いません`,
+      );
+    }
+    if (!seg.source && r.start >= input.now && r.start < add(input.now, input.preparationMinutes)) {
+      warnings.push(
+        `出発まで約${minutesBetween(input.now, r.start)}分です。準備の時間が足りない可能性があります`,
+      );
     }
     if (seg.target && r.end > seg.target.errand.start) {
       warnings.push(
@@ -426,9 +425,7 @@ function review(routed: Routed[], input: ComposeInput, state: State, fix: boolea
     seg.points.forEach((point, i) => {
       if (!point.stop || !point.store) return;
       const from = seg.arriveBy ? add(r.dep[i]!, -point.dwell) : r.arr[i - 1]!;
-      const until = add(from, point.dwell - 1);
-      const open = (store: Store) =>
-        isOpenAt(store, from) === true && isOpenAt(store, until) === true;
+      const open = (store: Store) => isOpenDuring(store, from, add(from, point.dwell)) === true;
       if (open(point.store)) return;
       if (!fix) {
         warnings.push(

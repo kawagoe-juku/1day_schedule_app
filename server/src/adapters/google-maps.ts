@@ -68,6 +68,29 @@ export function isOpenAt(place: Pick<Place, 'openingPeriods'>, at: Date): boolea
   );
 }
 
+/**
+ * from から to まで、途切れずに営業しているか（時間帯が続いていれば可。昼休みなどをまたぐなら不可）。
+ * 営業時間の情報が無い場所は undefined
+ */
+export function isOpenDuring(
+  place: Pick<Place, 'openingPeriods'>,
+  from: Date,
+  to: Date,
+): boolean | undefined {
+  const periods = place.openingPeriods?.map((p) => ({
+    open: Date.parse(p.open),
+    close: p.close === undefined ? Infinity : Date.parse(p.close),
+  }));
+  if (!periods) return undefined;
+  let time = from.getTime();
+  for (let i = 0; i <= periods.length && time < to.getTime(); i++) {
+    const period = periods.find((p) => p.open <= time && time < p.close);
+    if (!period) return false;
+    time = period.close;
+  }
+  return time >= to.getTime();
+}
+
 export interface PlaceSearch {
   /** 探す言葉（例：スーパー、ドラッグストア マツモトキヨシ） */
   query: string;

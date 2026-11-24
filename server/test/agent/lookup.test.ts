@@ -279,6 +279,14 @@ describe('createTravel', () => {
     expect(requests).toHaveLength(0);
   });
 
+  it('車・自転車は、300m 以内でも徒歩にしない', async () => {
+    const { maps, routeCalls } = fakeMaps({ route: walkRoute(2) });
+    const travel = createTravel({ googleMaps: maps }, options);
+    const leg = await travel({ from: HOME, to: north(HOME, 250), mode: 'car' });
+    expect(leg).toMatchObject({ mode: 'car', minutes: 2 });
+    expect(routeCalls()).toBe(1);
+  });
+
   it('電車は、乗換案内の結果から時刻・運賃・出口・乗車位置・駅名を作る', async () => {
     const { navitime, requests } = fakeNavitime([railRoute]);
     const travel = createTravel({ navitime }, options);
