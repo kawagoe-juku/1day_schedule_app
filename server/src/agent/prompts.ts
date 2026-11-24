@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { aiText, type AiCall } from './ai.js';
-import { SLOT_IDS, SLOTS } from './slots.js';
+import { matchesTemplate, SLOT_IDS, SLOTS } from './slots.js';
 
 const time = z
   .string()
@@ -83,7 +83,10 @@ export type ErrandPatch = z.infer<typeof ErrandPatch>;
 
 /** 判断の出力 */
 export const Decisions = z.object({
-  slots: z.array(z.object({ slot: z.enum(SLOT_IDS), decision: aiText(40) })),
+  /** テンプレートの全スロットを、決めた順番どおりに（欠落・重複・順序違いは不合格） */
+  slots: z
+    .array(z.object({ slot: z.enum(SLOT_IDS), decision: aiText(40) }))
+    .refine(matchesTemplate, 'slots must match the template'),
   stopovers: z.array(
     z.object({
       stopId: id,

@@ -115,6 +115,19 @@ describe('Decisions（判断の出力）', () => {
     expect(Decisions.safeParse({ ...decisions, slots }).success).toBe(false);
   });
 
+  it('スロットが空・欠落・重複・順序違いの出力は受け入れない', () => {
+    const [first, second, ...rest] = decisions.slots;
+    for (const slots of [
+      [],
+      decisions.slots.slice(1),
+      [first, first, ...rest],
+      [second, first, ...rest],
+      [...decisions.slots, first],
+    ]) {
+      expect(Decisions.safeParse({ ...decisions, slots }).success).toBe(false);
+    }
+  });
+
   it('判断文は 40 文字に切り詰める', () => {
     const slots = decisions.slots.map((s) => ({ ...s, decision: 'あ'.repeat(50) }));
     expect(Decisions.parse({ ...decisions, slots }).slots[0]?.decision).toHaveLength(40);
@@ -212,6 +225,14 @@ describe('pointProgramOf（ポイントの対象店舗の判定）', () => {
     expect(pointProgramOf('ライフ 太子堂店', ['dpoint'])).toBe('dpoint');
     expect(pointProgramOf('ナチュラルローソン 渋谷店', ['ponta'])).toBe('ponta');
     expect(pointProgramOf('イオンモール幕張新都心', ['waon'])).toBe('waon');
+  });
+
+  it('空白で区切られていれば、カタカナで始まる支店名でも対象にする', () => {
+    expect(pointProgramOf('ローソン センター南店', ['ponta'])).toBe('ponta');
+    expect(pointProgramOf('マツモトキヨシ　アトレ店', ['dpoint'])).toBe('dpoint');
+    expect(pointProgramOf('セブン-イレブン アリオ橋本店', ['nanaco'])).toBe('nanaco');
+    // 空白なしで続くものは、別の語と見分けられないので対象にしない
+    expect(pointProgramOf('ローソンセンター南店', ['ponta'])).toBeUndefined();
   });
 
   it('有効にしていないポイントの店・対象外の店は undefined', () => {

@@ -75,23 +75,23 @@ export const POINT_CHAINS: Record<PointProgramCode, readonly string[]> = {
   nanaco: ['セブン-イレブン', 'イトーヨーカドー', 'ヨークマート', 'ヨークフーズ', 'デニーズ'],
 };
 
-/** 表記のゆれ（全角半角・空白・ハイフンの種類）をそろえる */
-const normalize = (value: string) =>
-  value
-    .normalize('NFKC')
-    .replace(/\s/g, '')
-    .replace(/[-‐‑‒–—―−]/g, 'ー');
+/** 表記のゆれ（全角半角・ハイフンの種類）をそろえる。空白は、語の区切りとして残す */
+const normalize = (value: string) => value.normalize('NFKC').replace(/[-‐‑‒–—―−]/g, 'ー');
 
 /**
  * チェーン名が、店名の中に「ひとまとまりの語」として現れるか。
- * 前後がカタカナで続くものは別の語なので除く（「イオン」と「銀座ライオン」、「ライフ」と「ライフォート」）
+ * 前後がカタカナで続くものは別の語なので除く（「イオン」と「銀座ライオン」、「ライフ」と「ライフォート」）。
+ * 空白で区切られていれば、カタカナで始まる支店名が続いてもよい（「ローソン センター南店」）
  */
 const matchers = new Map<string, RegExp>();
 function hasChain(name: string, chain: string): boolean {
   let matcher = matchers.get(chain);
   if (!matcher) {
-    const escaped = normalize(chain).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    matcher = new RegExp(`(?<![ァ-ヶー])${escaped}(?![ァ-ヶー])`);
+    // チェーン名の中の空白の有無は問わない（「マツモト キヨシ」）
+    const pattern = [...normalize(chain).replace(/\s/g, '')]
+      .map((char) => char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s*');
+    matcher = new RegExp(`(?<![ァ-ヶー])${pattern}(?![ァ-ヶー])`);
     matchers.set(chain, matcher);
   }
   return matcher.test(name);

@@ -9,7 +9,7 @@
  * 結果：logs/verify-agent.md・logs/verify-agent.json
  * 店の候補は固定のデータ（外部 API は呼ばない）。
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAi } from '../src/agent/ai.js';
@@ -22,13 +22,17 @@ import {
 } from '../src/agent/prompts.js';
 import { matchesTemplate } from '../src/agent/slots.js';
 
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+// サーバと同じ設定（BEDROCK_MODEL_ID など）で確かめる。すでにある環境変数は上書きされない
+const ENV_FILE = resolve(ROOT, 'server/.env');
+if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
+
 const MODEL_ID = process.env.BEDROCK_MODEL_ID ?? 'jp.anthropic.claude-sonnet-4-6';
 const RUNS = Number(process.env.VERIFY_RUNS ?? 20);
 /** インジェクションの文例を流す回数（結果が揺れるので、1回では判定しない） */
 const INJECTION_RUNS = Number(process.env.VERIFY_INJECTION_RUNS ?? 3);
 const CONCURRENCY = Number(process.env.VERIFY_CONCURRENCY ?? 3);
 const LIMIT_MS = { interpret: 3000, decide: 4000 };
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const ai = createAi({ modelId: MODEL_ID, region: process.env.AWS_REGION ?? 'ap-northeast-1' });
 const print = (line: string) => void process.stdout.write(`${line}\n`);
@@ -261,7 +265,10 @@ function checkDecisions(decisions: Decisions, data: ReturnType<typeof decideData
     decisions.stopovers.every((s) => valid.has(`${s.stopId}/${s.candidate}`))
       ? ''
       : '候補に無い番号を選んでいる',
-    decisions.stopovers.length === data.stops.length ? '' : '店を選んでいない立寄りがある',
+    decisions.stopovers.length === data.stops.length &&
+    data.stops.every((stop) => decisions.stopovers.filter((s) => s.stopId === stop.id).length === 1)
+      ? ''
+      : '店を選んでいない（または重ねて選んだ）立寄りがある',
   ].filter(Boolean);
 }
 

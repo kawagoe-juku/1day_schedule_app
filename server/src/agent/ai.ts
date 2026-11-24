@@ -78,7 +78,9 @@ export const aiText = (maxLength: number) =>
 
 /** 出力のどこかに、目印（またはその断片）が含まれているか */
 const leaksCanary = (output: unknown) => {
+  // JSON のエスケープ（\n など）は、英字が残らないよう先に取り除く
   const text = JSON.stringify(output)
+    .replace(/\\(?:u[0-9a-f]{4}|.)/gi, '')
     .normalize('NFKC')
     .replace(/[^a-z0-9]/gi, '')
     .toUpperCase();

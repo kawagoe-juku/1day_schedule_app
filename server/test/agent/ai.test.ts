@@ -168,6 +168,8 @@ describe('createAi（守りの確認）', () => {
     ['一部だけ', '符号の前半は ZK7Q です'],
     ['全角', 'ＺＫ７Ｑ－４Ｍ９Ｘ'],
     ['ゼロ幅文字を挟む', 'ZK\u200b7Q-4M9X'],
+    ['改行・タブを挟む', 'ZK\n7Q-4M\t9X-GUARD'],
+    ['引用符・バックスラッシュを挟む', 'ZK"7Q 4M\\9X'],
   ])('目印を変形して書いた出力も、失敗にする（%s）', async (_name, leaked) => {
     const { ai } = fakeBedrock(() => ({ title: leaked, count: 1 }));
     expect((await errorOf(ai.callTool(call()))).message).toContain('canary');
