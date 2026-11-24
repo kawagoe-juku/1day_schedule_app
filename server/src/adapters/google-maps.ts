@@ -15,6 +15,15 @@ export interface LatLng {
   lng: number;
 }
 
+/** 2点間の直線距離（m） */
+export function distanceMeters(a: LatLng, b: LatLng): number {
+  const rad = (deg: number) => (deg * Math.PI) / 180;
+  const h =
+    Math.sin(rad(b.lat - a.lat) / 2) ** 2 +
+    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h));
+}
+
 export interface GeocodeResult {
   placeId: string;
   formattedAddress: string;
@@ -70,6 +79,8 @@ export interface PlaceSearch {
   maxResults?: number;
   /** true なら、今営業している場所だけ */
   openNow?: boolean;
+  /** basic なら、営業時間を取得しない（料金の区分が下がる）。既定は営業時間つき */
+  fields?: 'basic' | 'hours';
 }
 
 export type RouteMode = 'walk' | 'bicycle' | 'car';
@@ -176,11 +187,9 @@ const RoutesResponse = z.object({
     .default([]),
 });
 
+const BASIC_FIELDS = ['id', 'displayName', 'formattedAddress', 'location'];
 const PLACE_FIELDS = [
-  'id',
-  'displayName',
-  'formattedAddress',
-  'location',
+  ...BASIC_FIELDS,
   'currentOpeningHours.openNow',
   'currentOpeningHours.periods',
 ];
@@ -305,7 +314,7 @@ export function createGoogleMapsClient(options: GoogleMapsClientOptions): Google
       }
     },
 
-    async searchPlaces({ query, near, radiusMeters = 1000, maxResults = 10, openNow }) {
+    async searchPlaces({ query, near, radiusMeters = 1000, maxResults = 10, openNow, fields }) {
       const res = await requestJson(
         {
           service: SERVICE,
@@ -314,7 +323,9 @@ export function createGoogleMapsClient(options: GoogleMapsClientOptions): Google
           url: `${PLACES_URL}/places:searchText`,
           headers: {
             ...keyHeader,
-            'x-goog-fieldmask': PLACE_FIELDS.map((f) => `places.${f}`).join(','),
+            'x-goog-fieldmask': (fields === 'basic' ? BASIC_FIELDS : PLACE_FIELDS)
+              .map((f) => `places.${f}`)
+              .join(','),
           },
           body: {
             textQuery: query,
