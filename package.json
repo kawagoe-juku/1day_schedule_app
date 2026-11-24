@@ -34,7 +34,8 @@
     "tools:setup": "bash scripts/setup-tools-mac.sh",
     "aws:check": "bash scripts/aws-check.sh",
     "dev:token": "node scripts/dev-token.mjs",
-    "verify:agent": "npm run verify:agent -w server"
+    "verify:agent": "npm run verify:agent -w server",
+    "verify:routes": "npm run verify:routes -w server"
   },
   "devDependencies": {
     "amazon-cognito-identity-js": "^6.3.22",
