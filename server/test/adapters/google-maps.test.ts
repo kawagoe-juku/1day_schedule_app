@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGoogleMapsClient } from '../../src/adapters/google-maps.js';
+import { createGoogleMapsClient, isOpenAt } from '../../src/adapters/google-maps.js';
 import type { ExternalApiCall } from '../../src/adapters/metrics.js';
 import { createFakeFetch, hang, json, status } from '../helpers/fake-fetch.js';
 
@@ -201,6 +201,68 @@ describe('Google Maps クライアント：正常', () => {
     expect(api.calls[0]?.headers.get('x-goog-fieldmask')).toContain('places.id');
   });
 
+  it('searchPlaces：7日分の営業時間を、日本時間の日時にして返す', async () => {
+    const { api, client } = setup();
+    const point = (day: number, hour: number, minute = 0) => ({
+      date: { year: 2026, month: 11, day },
+      day: 5,
+      hour,
+      minute,
+    });
+    api.on('POST', SEARCH_TEXT, () =>
+      json({
+        places: [
+          {
+            id: 'p1',
+            displayName: { text: 'スーパーA' },
+            currentOpeningHours: {
+              openNow: true,
+              periods: [
+                { open: point(20, 9), close: point(20, 21, 30) },
+                // 日付をまたぐ営業
+                { open: point(21, 18), close: point(22, 2) },
+                // 日付の無い時間帯は、どの日のものか決められないので使わない
+                { open: { day: 0, hour: 9, minute: 0 }, close: { day: 0, hour: 18, minute: 0 } },
+              ],
+            },
+          },
+          {
+            id: 'p2',
+            displayName: { text: '24時間スーパー' },
+            // 24時間営業は、終わりの無い時間帯が1つだけ返る
+            currentOpeningHours: { openNow: true, periods: [{ open: point(20, 0) }] },
+          },
+        ],
+      }),
+    );
+    const [store, allDay] = await client.searchPlaces({ query: 'スーパー' });
+    expect(store?.openingPeriods).toEqual([
+      { open: '2026-11-20T09:00:00+09:00', close: '2026-11-20T21:30:00+09:00' },
+      { open: '2026-11-21T18:00:00+09:00', close: '2026-11-22T02:00:00+09:00' },
+    ]);
+    expect(allDay?.openingPeriods).toEqual([{ open: '2026-11-20T00:00:00+09:00' }]);
+  });
+
+  it('searchPlaces：日付の無い営業時間は使わず、何も残らなければ「分からない」にする', async () => {
+    const { api, client } = setup();
+    const dated = { date: { year: 2026, month: 11, day: 20 }, day: 5, hour: 9, minute: 0 };
+    const undated = { day: 5, hour: 21, minute: 0 };
+    api.on('POST', SEARCH_TEXT, () =>
+      json({
+        places: [
+          // 終了に日付が無い：終わりなく営業（24時間営業）と取り違えない
+          { id: 'p1', currentOpeningHours: { periods: [{ open: dated, close: undated }] } },
+          // すべて日付が無い：休みと取り違えない
+          { id: 'p2', currentOpeningHours: { periods: [{ open: undated }] } },
+          // 時間帯が1つも無い：7日間ずっと休み
+          { id: 'p3', currentOpeningHours: { periods: [] } },
+        ],
+      }),
+    );
+    const places = await client.searchPlaces({ query: 'スーパー' });
+    expect(places.map((p) => p.openingPeriods)).toEqual([undefined, undefined, []]);
+  });
+
   it('searchPlaces：0件は空の配列', async () => {
     const { api, client } = setup();
     api.on('POST', SEARCH_TEXT, () => json({}));
@@ -275,5 +337,36 @@ describe.each(OPERATIONS)('Google Maps クライアント：%s の失敗', (oper
     api.on(method, url, () => status(503));
     await expect(call(client)).rejects.toMatchObject({ operation, kind: 'http', status: 503 });
     expect(calls.map((c) => c.outcome)).toEqual(['server_error', 'server_error']);
+  });
+});
+
+describe('isOpenAt', () => {
+  const at = (iso: string) => new Date(iso);
+  const store = {
+    openingPeriods: [
+      { open: '2026-11-20T09:00:00+09:00', close: '2026-11-20T21:30:00+09:00' },
+      { open: '2026-11-21T18:00:00+09:00', close: '2026-11-22T02:00:00+09:00' },
+    ],
+  };
+
+  it('営業時間の中なら true、外なら false（開始はちょうどを含み、終了は含まない）', () => {
+    expect(isOpenAt(store, at('2026-11-20T09:00:00+09:00'))).toBe(true);
+    expect(isOpenAt(store, at('2026-11-20T21:29:00+09:00'))).toBe(true);
+    expect(isOpenAt(store, at('2026-11-20T21:30:00+09:00'))).toBe(false);
+    expect(isOpenAt(store, at('2026-11-20T08:59:00+09:00'))).toBe(false);
+    // 定休日（時間帯が無い日）
+    expect(isOpenAt(store, at('2026-11-21T12:00:00+09:00'))).toBe(false);
+    // 日付をまたぐ営業
+    expect(isOpenAt(store, at('2026-11-22T01:00:00+09:00'))).toBe(true);
+  });
+
+  it('24時間営業（終わりの無い時間帯）は、開始より後なら true', () => {
+    const allDay = { openingPeriods: [{ open: '2026-11-20T00:00:00+09:00' }] };
+    expect(isOpenAt(allDay, at('2026-11-23T03:00:00+09:00'))).toBe(true);
+  });
+
+  it('営業時間の情報が無い場所は undefined（分からない）', () => {
+    expect(isOpenAt({}, at('2026-11-20T12:00:00+09:00'))).toBeUndefined();
+    expect(isOpenAt({ openingPeriods: [] }, at('2026-11-20T12:00:00+09:00'))).toBe(false);
   });
 });

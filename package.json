@@ -33,7 +33,8 @@
     "app:build": "cd app && flutter build web --dart-define=APP_ENV=${APP_ENV:-local}",
     "tools:setup": "bash scripts/setup-tools-mac.sh",
     "aws:check": "bash scripts/aws-check.sh",
-    "dev:token": "node scripts/dev-token.mjs"
+    "dev:token": "node scripts/dev-token.mjs",
+    "verify:agent": "npm run verify:agent -w server"
   },
   "devDependencies": {
     "amazon-cognito-identity-js": "^6.3.22",

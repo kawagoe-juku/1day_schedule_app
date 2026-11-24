@@ -14,5 +14,12 @@
     "isolatedModules": true,
     "sourceMap": true
   },
-  "include": ["src", "test", "vitest.config.ts", "vitest.db.config.ts", "drizzle.config.ts"]
+  "include": [
+    "src",
+    "test",
+    "scripts",
+    "vitest.config.ts",
+    "vitest.db.config.ts",
+    "drizzle.config.ts"
+  ]
 }
