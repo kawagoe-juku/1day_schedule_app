@@ -34,6 +34,29 @@ export interface Place {
   location?: LatLng;
   /** 今営業しているか（営業時間の情報が無い場所は undefined） */
   openNow?: boolean;
+  /**
+   * 今日から7日分の営業時間（祝日・臨時休業を反映したもの）。営業時間の情報が無い場所は undefined。
+   * close が無い時間帯は、終わりなく営業（24時間営業）
+   */
+  openingPeriods?: OpeningPeriod[];
+}
+
+export interface OpeningPeriod {
+  /** ISO 8601（日本時間、+09:00 付き） */
+  open: string;
+  close?: string;
+}
+
+/**
+ * その日時に営業しているか。営業時間の情報が無い場所は undefined（分からない）。
+ * 立寄りの時刻は「今」ではないので、openNow ではなくこれで確かめる
+ */
+export function isOpenAt(place: Pick<Place, 'openingPeriods'>, at: Date): boolean | undefined {
+  if (!place.openingPeriods) return undefined;
+  const time = at.getTime();
+  return place.openingPeriods.some(
+    (p) => Date.parse(p.open) <= time && (p.close === undefined || time < Date.parse(p.close)),
+  );
 }
 
 export interface PlaceSearch {
@@ -117,12 +140,24 @@ const AutocompleteResponse = z.object({
     .default([]),
 });
 
+/** 営業時間の開始・終了（日付は、祝日などを反映した「今日から7日分」のときだけ付く） */
+const OpeningPoint = z.object({
+  date: z.object({ year: z.number(), month: z.number(), day: z.number() }).optional(),
+  hour: z.number().default(0),
+  minute: z.number().default(0),
+});
+
 const PlaceResponse = z.object({
   id: z.string(),
   displayName: z.object({ text: z.string() }).optional(),
   formattedAddress: z.string().optional(),
   location: z.object({ latitude: z.number(), longitude: z.number() }).optional(),
-  currentOpeningHours: z.object({ openNow: z.boolean().optional() }).optional(),
+  currentOpeningHours: z
+    .object({
+      openNow: z.boolean().optional(),
+      periods: z.array(z.object({ open: OpeningPoint, close: OpeningPoint.optional() })).optional(),
+    })
+    .optional(),
 });
 
 const SearchTextResponse = z.object({ places: z.array(PlaceResponse).default([]) });
@@ -141,8 +176,39 @@ const RoutesResponse = z.object({
     .default([]),
 });
 
-const PLACE_FIELDS = ['id', 'displayName', 'formattedAddress', 'location', 'currentOpeningHours'];
+const PLACE_FIELDS = [
+  'id',
+  'displayName',
+  'formattedAddress',
+  'location',
+  'currentOpeningHours.openNow',
+  'currentOpeningHours.periods',
+];
 const TRAVEL_MODES: Record<RouteMode, string> = { walk: 'WALK', bicycle: 'BICYCLE', car: 'DRIVE' };
+
+const pad = (value: number) => String(value).padStart(2, '0');
+/** Google の営業時間（その場所の現地時刻。日本国内なので日本時間）を ISO 8601 にする */
+const toJstIso = (point: z.infer<typeof OpeningPoint>): string | undefined =>
+  point.date
+    ? `${point.date.year}-${pad(point.date.month)}-${pad(point.date.day)}T${pad(point.hour)}:${pad(point.minute)}:00+09:00`
+    : undefined;
+
+type RawPeriod = { open: z.infer<typeof OpeningPoint>; close?: z.infer<typeof OpeningPoint> };
+/**
+ * 営業時間を、日時の組にする。日付の無い時間帯は、どの日のものか決められないので使わない。
+ * 使える時間帯が1つも残らなければ、営業時間は「分からない」（undefined）として扱う
+ * （「休み」や「終わりなく営業」と取り違えない）
+ */
+function toOpeningPeriods(periods: RawPeriod[] | undefined): OpeningPeriod[] | undefined {
+  if (!periods) return undefined;
+  const usable = periods.flatMap((period) => {
+    const open = toJstIso(period.open);
+    const close = period.close && toJstIso(period.close);
+    if (!open || (period.close && !close)) return [];
+    return [{ open, close: close || undefined }];
+  });
+  return periods.length > 0 && usable.length === 0 ? undefined : usable;
+}
 
 const toPlace = (p: z.infer<typeof PlaceResponse>): Place => ({
   placeId: p.id,
@@ -150,6 +216,7 @@ const toPlace = (p: z.infer<typeof PlaceResponse>): Place => ({
   address: p.formattedAddress,
   location: p.location ? { lat: p.location.latitude, lng: p.location.longitude } : undefined,
   openNow: p.currentOpeningHours?.openNow,
+  openingPeriods: toOpeningPeriods(p.currentOpeningHours?.periods),
 });
 
 const toLatLng = (p: LatLng) => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } });

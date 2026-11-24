@@ -15,9 +15,11 @@
     "test:db": "vitest run --config vitest.db.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:rollback": "tsx src/db/rollback.ts"
+    "db:rollback": "tsx src/db/rollback.ts",
+    "verify:agent": "tsx scripts/verify-agent.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1173.0",
     "aws-jwt-verify": "^5.2.1",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.2.0",

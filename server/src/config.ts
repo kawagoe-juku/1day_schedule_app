@@ -41,6 +41,13 @@ const ConfigSchema = z.object({
   /** 外部 API のキー（ECS では Secrets Manager から入る。ローカルは必要なときだけ .env に書く） */
   GOOGLE_MAPS_SERVER_KEY: z.string().min(1).optional(),
   NAVITIME_RAPIDAPI_KEY: z.string().min(1).optional(),
+  /**
+   * 計画生成に使う Bedrock のモデル（ECS では App スタックが設定する。未設定なら計画生成は使えない）。
+   * 変えるときは npm run verify:agent で確かめること（モデルによって、受け付ける指定が違う）
+   */
+  BEDROCK_MODEL_ID: z.string().min(1).optional(),
+  /** Bedrock を呼ぶリージョン（ECS では実行環境が設定する） */
+  AWS_REGION: z.string().default('ap-northeast-1'),
   APP_VERSION: z.string().default('0.1.0'),
   /** 準備のみの機能の Feature Flag（既定はすべて OFF。一覧は features.ts） */
   ...featureFlags,
