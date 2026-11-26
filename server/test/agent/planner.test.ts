@@ -312,6 +312,23 @@ describe('answerPlan（確認への回答）', () => {
 });
 
 describe('整合性チェック', () => {
+  it('立寄りだけの入力で、寄れる店が無ければ、完成にしない（生成回数を使わない）', async () => {
+    const { deps } = setup({
+      interpret: intent({ errands: [], stops: [SUPERMARKET] }),
+      decide: (data) => ({
+        ...decide(data),
+        stopovers: [{ stopId: 's1', candidate: 'c99', when: 'after' }],
+      }),
+    });
+    const outcome = await startPlan(deps, context(), INPUT);
+    expect(outcome.status).toBe('error');
+    expect(outcome.composed).toBeUndefined();
+    expect(outcome.warnings).toEqual([
+      '寄れる店が見つからなかったため、「スーパー」への立寄りを外しました',
+      '計画に入れられる用事・立寄りがありません',
+    ]);
+  });
+
   it('候補に無い番号を選んだ立寄り・選ばれなかった立寄りは、外して注意を出す', async () => {
     const { deps } = setup({
       interpret: intent({ stops: [SUPERMARKET, { ...SUPERMARKET, category: 'drugstore' }] }),

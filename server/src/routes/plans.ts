@@ -43,9 +43,14 @@ export interface PlanRouteOptions {
   deadlineMs?: number;
 }
 
-/** サーバ処理を打ち切るまでの時間。この 0.5 秒前までに外部 API の処理が終わっていれば、保存して成功にする */
+/**
+ * サーバ処理を打ち切るまでの時間（要求を受けた時点から数える）。
+ * この 0.5 秒前までに外部 API の処理が終わっていれば、保存して成功にする。
+ * 保存は期限の 1 秒後までに終える（画面は 15 秒で諦める）。過ぎたら取り消す
+ */
 const DEADLINE_MS = 13_000;
 const CHECKPOINT_MARGIN_MS = 500;
+const SAVE_MARGIN_MS = 1000;
 
 const id = z.string().min(1).max(32);
 const CreatePlanRequest = z.strictObject({ inputText: z.string().trim().min(1).max(500) });
@@ -147,9 +152,9 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     inputText: string,
     existing: Plan | undefined,
     work: (planner: PlannerDeps, ctx: Awaited<ReturnType<typeof loadContext>>) => Promise<Outcome>,
+    startedAt = Date.now(),
   ) {
     const { db, ai, maps, repos } = dependencies();
-    const startedAt = Date.now();
     const time = now();
     const retryAfterSeconds = Math.ceil((nextReset(time) - time.getTime()) / 1000);
     const timeout = () => new ExternalApiError('agent', 'deadline', 'timeout');
@@ -180,7 +185,7 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
       outcome = await Promise.race([
         run,
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(timeout()), deadlineMs);
+          timer = setTimeout(() => reject(timeout()), startedAt + deadlineMs - Date.now());
         }),
       ]);
     } finally {
@@ -195,6 +200,7 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
       outcome,
       quotaDate: jstDate(time),
       retryAfterSeconds,
+      saveBy: startedAt + deadlineMs + SAVE_MARGIN_MS,
     });
     return toPlan(saved.plan, saved.items, saved.used, time, outcome.purchaseItems);
   }
@@ -246,6 +252,7 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     if (!request.user) throw unauthorized();
     const userId = request.user.sub;
     limiter.consume(userId);
+    const startedAt = Date.now();
     const { repos } = dependencies();
     const { planId } = parseInput(PlanId, request.params);
     const { token, ...answer } = parseInput(ClarifyRequest, request.body);
@@ -260,8 +267,12 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     }
     if (token !== draft.rev)
       throw conflict('TOKEN_MISMATCH', '回答する確認が、最新のものと違います');
-    return generate(userId, plan.inputText, plan, (planner, ctx) =>
-      answerPlan(planner, ctx, plan, answer),
+    return generate(
+      userId,
+      plan.inputText,
+      plan,
+      (planner, ctx) => answerPlan(planner, ctx, plan, answer),
+      startedAt,
     );
   });
 }

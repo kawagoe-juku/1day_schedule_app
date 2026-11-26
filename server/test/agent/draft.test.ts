@@ -430,6 +430,16 @@ describe('確認質問', () => {
     expect(draft.errands[0]?.end).toBe(at('01:00', '2026-11-26'));
   });
 
+  it('開始が未定でも、答えた終了は残す。あとで開始を答えても消えない', () => {
+    const draft = resolved(draftOf(intent({ errands: [errand({ startTime: null })] })));
+    const patch = { place: null, placeIsSpecific: true, startTime: null, endTime: null };
+    applyPatch(draft, 'e1', { ...patch, endTime: '15:00' });
+    expect(draft.errands[0]).toMatchObject({ end: at('15:00') });
+    expect(draft.errands[0]?.start).toBeUndefined();
+    applyPatch(draft, 'e1', { ...patch, startTime: '14:00' });
+    expect(draft.errands[0]).toMatchObject({ start: at('14:00'), end: at('15:00') });
+  });
+
   it('自宅のすぐ近くとして自宅扱いにした用事も、場所を答え直したら検索し直す', () => {
     const draft = resolved(draftOf());
     draft.errands[0]!.at = 'home';
@@ -538,6 +548,17 @@ describe('reconcile（設定の変更での見直し）', () => {
       start: at('17:00'),
       end: at('18:00'),
     });
+  });
+
+  it('予定の場所で自宅扱いになっていた用事は、入力の場所に戻すときに検索し直す', () => {
+    const draft = draftOf(
+      intent({ errands: [errand({ sameAs: 'c1', place: '駅', placeIsSpecific: false })] }),
+      [event('c1', '15:00', '16:00', { place: '自宅前の公民館' })],
+    );
+    Object.assign(draft.errands[0]!, { spot: TOKYO, at: 'home' });
+    reconcile(draft, settings(false, []));
+    expect(draft.errands[0]).toMatchObject({ at: 'place', place: '駅' });
+    expect(draft.errands[0]?.spot).toBeUndefined();
   });
 
   it('使える予定は、そのまま残す', () => {

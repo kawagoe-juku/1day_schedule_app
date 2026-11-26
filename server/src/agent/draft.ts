@@ -290,7 +290,8 @@ export function applyPatch(draft: Draft, errandId: string, patch: ErrandPatch): 
   const start = changes.start ?? errand.start;
   // 変わっていない終了を AI がそのまま返すことがある。新しい開始より前なら、終了の指定なしとして扱う
   const echoed = patch.startTime && errand.end && patch.endTime === hhmm(errand.end);
-  if (patch.endTime && start && !echoed) changes.end = atTime(draft.date, patch.endTime, start);
+  // 開始が未定でも、答えた終了は残す
+  if (patch.endTime && !echoed) changes.end = atTime(draft.date, patch.endTime, start);
   Object.assign(errand, changes);
   if (errand.original) Object.assign(errand.original, changes);
   // 開始が終了より後になったら、終了は聞き直す
@@ -417,7 +418,8 @@ export function assume(
     }
     if (missing.includes('start')) {
       errand.start = jstDate(now) === draft.date ? soon : atTime(draft.date, '10:00');
-      delete errand.end;
+      // 答えてあった終了は、仮定した開始より後なら残す
+      if (errand.end && Date.parse(errand.end) <= Date.parse(errand.start)) delete errand.end;
       draft.assumptions.push(`「${errand.title}」の開始を ${hhmm(errand.start)} と仮定しました`);
     }
     if (errand.start && !errand.end) {
@@ -442,7 +444,11 @@ export function reconcile(draft: Draft, ctx: Pick<PlanContext, 'user' | 'events'
   draft.errands = draft.errands.filter((e) => e.source === 'input' || !e.ref || usable(e.ref));
   for (const errand of draft.errands) {
     if (errand.source !== 'input' || !errand.ref || usable(errand.ref)) continue;
-    if (errand.original?.place !== errand.place) delete errand.spot;
+    if (errand.original?.place !== errand.place) {
+      // 予定の場所が自宅のすぐ近くで「自宅で迎える」になっていた用事も、入力の場所を検索し直す
+      delete errand.spot;
+      errand.at = 'place';
+    }
     Object.assign(errand, { place: undefined, start: undefined, end: undefined }, errand.original);
     delete errand.ref;
     delete errand.original;

@@ -437,6 +437,11 @@ async function advance(
   for (const stop of stops) {
     if (composed.droppedStopIds.includes(stop.id)) delete stop.options;
   }
+  // 立寄りがすべて外れて、何も残らなかったとき（生成回数は数えない）
+  if (composed.items.length === 0) {
+    warnings.push(...composed.warnings, '計画に入れられる用事・立寄りがありません');
+    return outcome('error');
+  }
 
   // 名称の検証：AI の文（判断文・仮定）に、確認の取れない駅名があれば捨てる。
   // 立寄りが1件も残らなかったときの、立寄りのスロットの判断文は、定型文にする
@@ -477,12 +482,15 @@ export interface SaveArgs {
   quotaDate: string;
   /** 1日の上限に達したときの、Retry-After の秒数 */
   retryAfterSeconds: number;
+  /** 保存を終える期限（エポックミリ秒）。過ぎたら、すべて取り消す */
+  saveBy: number;
 }
 
 /**
  * 結果を保存する（1トランザクション）。計画が完成したときは、生成回数を数える。
  * - 回答の保存は、「読んだときと同じ状態・版数」を条件にする。変わっていたら 409
  * - 生成回数が上限を超えたら、すべて取り消して 429
+ * - 期限（saveBy）を過ぎたら、すべて取り消して時間切れにする（接続・ロックの待ちで、画面が諦めたあとに保存しない）
  */
 export async function savePlan(db: Db, args: SaveArgs) {
   const { userId, existing, outcome } = args;
@@ -500,7 +508,12 @@ export async function savePlan(db: Db, args: SaveArgs) {
     warnings: outcome.warnings,
     draft,
   };
-  return db.transaction(async (tx) => {
+  const timeout = () => new ExternalApiError('agent', 'save', 'timeout');
+  const run = db.transaction(async (tx) => {
+    const left = Math.ceil(args.saveBy - Date.now());
+    if (left <= 0) throw timeout();
+    // 1文ごとの待ちの上限（この取引の中だけ）
+    await tx.execute(sql`select set_config('statement_timeout', ${String(left)}, true)`);
     const repos = repositories(tx);
     let plan: Plan | undefined;
     if (existing) {
@@ -561,6 +574,11 @@ export async function savePlan(db: Db, args: SaveArgs) {
       ? quota.increment(userId, args.quotaDate)
       : quota.getUsedCount(userId, args.quotaDate));
     if (used > DAILY_LIMIT) throw new RateLimitedError(args.retryAfterSeconds);
+    if (Date.now() >= args.saveBy) throw timeout();
     return { plan, items, used };
+  });
+  // DB が文を打ち切ったときも、時間切れとして返す
+  return run.catch((error: unknown) => {
+    throw error instanceof AppError || Date.now() < args.saveBy ? error : timeout();
   });
 }

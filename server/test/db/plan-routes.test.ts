@@ -3,7 +3,7 @@
  * 保存は実際にコミットするので、useTestDb（テストごとの巻き戻し）は使わず、
  * このファイル専用の利用者 ID を使って、終わったら消す。
  */
-import { eq, like } from 'drizzle-orm';
+import { eq, like, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ExternalApiError } from '../../src/adapters/http.js';
@@ -404,6 +404,25 @@ describe('POST /agent/plans/{planId}/clarify', () => {
     expect(done.statusCode).toBe(200);
     expect(done.json()).toMatchObject({ status: 'completed' });
     expect(done.json().items.some((i: { title: string }) => i.title === 'ジム')).toBe(false);
+  });
+
+  it('保存が期限までに終わらなければ、取り消して 502。生成回数は数えず、やり直せる', async () => {
+    const { post, clarify, repos } = await setup(
+      { interpret: NEEDS_QUESTION, patch: PATCH },
+      // 保存の期限は、その 1 秒後
+      { deadlineMs: 800 },
+    );
+    const first = (await post()).json();
+    const answer = { token: first.clarification.token, answer: '15時まで' };
+    // 別の取引が計画の行を掴んでいる間は、保存が待たされる
+    const response = await conn.db.transaction(async (tx) => {
+      await tx.execute(sql`select 1 from plan where id = ${first.id} for update`);
+      return clarify(first.id, answer);
+    });
+    expect(response.statusCode).toBe(502);
+    expect(await repos.generationQuotas.getUsedCount(U1, TODAY)).toBe(0);
+    expect(await plansOf()).toMatchObject([{ status: 'clarifying' }]);
+    expect((await clarify(first.id, answer)).json()).toMatchObject({ status: 'completed' });
   });
 
   it('409：確認の番号が違う／確認中でない／対象日を過ぎた', async () => {
