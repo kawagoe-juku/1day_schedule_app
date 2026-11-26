@@ -1,5 +1,5 @@
 /**
- * 行動計画の API（/agent/plans）：生成・取得・確認への回答。
+ * 行動計画の API（/agent/plans）：生成・取得・確認への回答・修正・項目の削除と、準備のみの2本。
  * ここでは、入力の検証・回数の制限・期限・応答の形を扱う。生成の中身は agent/planner.ts。
  */
 import type { FastifyInstance } from 'fastify';
@@ -15,6 +15,8 @@ import {
   answerPlan,
   conflict,
   DAILY_LIMIT,
+  removeItem,
+  revisePlan,
   savePlan,
   startPlan,
   type Outcome,
@@ -24,7 +26,7 @@ import type { Db } from '../db/client.js';
 import { repositories } from '../db/repositories/index.js';
 import type { PlanItem } from '../db/repositories/plan-item-repository.js';
 import type { Plan } from '../db/repositories/plan-repository.js';
-import { AppError, unauthorized } from '../errors.js';
+import { AppError, featureDisabled, unauthorized } from '../errors.js';
 import { toLoggableError } from '../logging.js';
 import { createRateLimiter, RateLimitedError } from '../rate-limit.js';
 import { parseInput } from '../validation.js';
@@ -70,7 +72,22 @@ const ClarifyRequest = z.strictObject({
     .optional(),
   homeBetween: z.array(id).max(5).optional(),
 });
-const PlanId = z.object({ planId: z.coerce.number().int().positive() });
+const ReviseRequest = z.strictObject({
+  instruction: z.string().trim().min(1).max(500),
+  purchaseItems: z
+    .array(
+      z.strictObject({ sourceId: id, items: z.array(z.string().trim().min(1).max(40)).max(20) }),
+    )
+    .max(10)
+    .optional(),
+});
+const ReplanRequest = z.strictObject({ delayMinutes: z.number().int().min(1).max(240) });
+const DepartureDetectedRequest = z.strictObject({
+  actualDepartureTime: z.iso.datetime({ offset: true }),
+});
+const positive = z.coerce.number().int().positive();
+const PlanId = z.object({ planId: positive });
+const ItemId = z.object({ planId: positive, itemId: positive });
 
 /** カレンダーを取得しない（同意とルーティンだけを見直すとき） */
 const NO_CALENDAR: CalendarSource = { list: async () => [] };
@@ -153,6 +170,8 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     existing: Plan | undefined,
     work: (planner: PlannerDeps, ctx: Awaited<ReturnType<typeof loadContext>>) => Promise<Outcome>,
     startedAt = Date.now(),
+    /** 生成回数に数えない（項目の削除） */
+    free = false,
   ) {
     const { db, ai, maps, repos } = dependencies();
     const time = now();
@@ -160,7 +179,8 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     const timeout = () => new ExternalApiError('agent', 'deadline', 'timeout');
     let timer: NodeJS.Timeout | undefined;
     const run = (async () => {
-      if ((await repos.generationQuotas.getUsedCount(userId, jstDate(time))) >= DAILY_LIMIT) {
+      const used = free ? 0 : await repos.generationQuotas.getUsedCount(userId, jstDate(time));
+      if (used >= DAILY_LIMIT) {
         throw new RateLimitedError(retryAfterSeconds);
       }
       // 回答のときは、カレンダーを取り直さない（予定は下書きにある。同意とルーティンだけを見直す）
@@ -201,8 +221,26 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
       quotaDate: jstDate(time),
       retryAfterSeconds,
       saveBy: startedAt + deadlineMs + SAVE_MARGIN_MS,
+      free,
     });
     return toPlan(saved.plan, saved.items, saved.used, time, outcome.purchaseItems);
+  }
+
+  /** 自分の計画を、状態を確かめて読む（404 → 状態の違い → 対象日を過ぎた、の順） */
+  async function findPlan(userId: string, planId: number, status: 'clarifying' | 'completed') {
+    const plan = await dependencies().repos.plans.findById(userId, planId);
+    if (!plan) throw new AppError(404, 'NOT_FOUND', '対象が見つかりません');
+    const draft = plan.draft as Draft | null;
+    if (plan.status !== status || !draft || (status === 'clarifying' && !draft.pending)) {
+      throw conflict(
+        'STATE_MISMATCH',
+        status === 'clarifying' ? '確認中の計画ではありません' : '完成した計画ではありません',
+      );
+    }
+    if (plan.targetDate < jstDate(now())) {
+      throw conflict('PLAN_EXPIRED', '対象日を過ぎた計画です。新しく作り直してください');
+    }
+    return plan;
   }
 
   app.post('/agent/plans', async (request, reply) => {
@@ -253,19 +291,10 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     const userId = request.user.sub;
     limiter.consume(userId);
     const startedAt = Date.now();
-    const { repos } = dependencies();
     const { planId } = parseInput(PlanId, request.params);
     const { token, ...answer } = parseInput(ClarifyRequest, request.body);
-    const plan = await repos.plans.findById(userId, planId);
-    if (!plan) throw new AppError(404, 'NOT_FOUND', '対象が見つかりません');
-    const draft = plan.draft as Draft | null;
-    if (plan.status !== 'clarifying' || !draft?.pending) {
-      throw conflict('STATE_MISMATCH', '確認中の計画ではありません');
-    }
-    if (plan.targetDate < jstDate(now())) {
-      throw conflict('PLAN_EXPIRED', '対象日を過ぎた計画です。新しく作り直してください');
-    }
-    if (token !== draft.rev)
+    const plan = await findPlan(userId, planId, 'clarifying');
+    if (token !== (plan.draft as Draft).rev)
       throw conflict('TOKEN_MISMATCH', '回答する確認が、最新のものと違います');
     return generate(
       userId,
@@ -274,5 +303,58 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
       (planner, ctx) => answerPlan(planner, ctx, plan, answer),
       startedAt,
     );
+  });
+
+  app.post('/agent/plans/:planId/revise', async (request) => {
+    if (!request.user) throw unauthorized();
+    const userId = request.user.sub;
+    limiter.consume(userId);
+    const startedAt = Date.now();
+    const { planId } = parseInput(PlanId, request.params);
+    const revision = parseInput(ReviseRequest, request.body);
+    const plan = await findPlan(userId, planId, 'completed');
+    return generate(
+      userId,
+      plan.inputText,
+      plan,
+      (planner, ctx) => revisePlan(planner, ctx, plan, revision),
+      startedAt,
+    );
+  });
+
+  app.delete('/agent/plans/:planId/items/:itemId', async (request) => {
+    if (!request.user) throw unauthorized();
+    const userId = request.user.sub;
+    limiter.consume(userId);
+    const startedAt = Date.now();
+    const { planId, itemId } = parseInput(ItemId, request.params);
+    const plan = await findPlan(userId, planId, 'completed');
+    const items = await dependencies().repos.planItems.listByPlan(plan.id);
+    const item = items.find((i) => i.id === itemId);
+    if (!item) throw new AppError(404, 'NOT_FOUND', '対象が見つかりません');
+    return generate(
+      userId,
+      plan.inputText,
+      plan,
+      (planner, ctx) => removeItem(planner, ctx, plan, item.sourceId),
+      startedAt,
+      true,
+    );
+  });
+
+  // 準備のみ（延期の再計画・出発の検知）。入力を検証して 501 を返す。
+  // Feature Flag（FEATURE_POSTPONE_REPLAN・FEATURE_DEPARTURE_DETECTION）が ON のときの処理は、まだ無い
+  app.post('/agent/plans/:planId/replan', async (request) => {
+    if (!request.user) throw unauthorized();
+    parseInput(PlanId, request.params);
+    parseInput(ReplanRequest, request.body);
+    throw featureDisabled();
+  });
+
+  app.post('/agent/plans/:planId/departure-detected', async (request) => {
+    if (!request.user) throw unauthorized();
+    parseInput(PlanId, request.params);
+    parseInput(DepartureDetectedRequest, request.body);
+    throw featureDisabled();
   });
 }

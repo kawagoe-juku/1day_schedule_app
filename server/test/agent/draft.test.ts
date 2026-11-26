@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyPatch,
+  applyRevision,
   applySelection,
   assume,
   createDraft,
@@ -575,5 +576,62 @@ describe('reconcile（設定の変更での見直し）', () => {
     expect(draft.errands[0]).toMatchObject({ start: at('13:00'), place: '東京駅', spot: TOKYO });
     expect(draft.errands[0]?.end).toBeUndefined();
     expect(draft.errands[0]?.original).toBeUndefined();
+  });
+});
+
+describe('applyRevision（修正の反映）', () => {
+  it('5件を超えたら、開始の早い順に5件を残し、注意に入れる', () => {
+    const draft = draftOf(intent({ stops: [] }));
+    const added = ['09:00', '10:00', '11:00', '12:00', '15:00'].map((startTime, index) =>
+      errand({ title: `用事${index}`, startTime }),
+    );
+    const { warnings } = applyRevision(draft, intent({ errands: added, stops: [] }));
+    expect(draft.errands.filter((e) => e.selected).map((e) => e.title)).toEqual([
+      '待ち合わせ',
+      '用事0',
+      '用事1',
+      '用事2',
+      '用事3',
+    ]);
+    expect(warnings).toEqual(['用事は5件、立寄りは5件までのため、1件を計画から外しました']);
+  });
+
+  it('計画に入れられる数より多く返ってきたら（5件 ＋ 新しい1件）、注意に入れる', () => {
+    const five = Array.from({ length: 5 }, (_, i) =>
+      errand({ title: `用事${i}`, startTime: `1${i}:00` }),
+    );
+    const draft = draftOf(intent({ errands: five, stops: [] }));
+    const kept = draft.errands.map((e, i) => errand({ ...five[i], id: e.id }));
+    const { warnings } = applyRevision(
+      draft,
+      intent({ errands: [...kept, errand({ title: '追加', startTime: '18:00' })], stops: [] }),
+    );
+    expect(draft.errands.find((e) => e.title === '追加')?.selected).toBe(false);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('変えていない値を返されても、まとめた予定の「戻すときの値」を書き換えない', () => {
+    const draft = draftOf(intent({ errands: [errand({ sameAs: 'c1' })], stops: [] }), [
+      event('c1', '15:00', '16:00'),
+    ]);
+    applyRevision(
+      draft,
+      intent({ errands: [errand({ id: 'e1', startTime: '15:00', endTime: '16:00' })], stops: [] }),
+    );
+    expect(draft.errands[0]?.original).toMatchObject({ start: at('13:00') });
+  });
+
+  it('取りやめた用事は、仮定の文・帰宅の指定からも消す。予定の件名は書き換えない', () => {
+    const draft = draftOf(intent({ stops: [] }), [event('c1', '16:00', '17:00')]);
+    draft.homeBetween = ['e1'];
+    draft.assumptions = ['「待ち合わせ」の所要時間を 60 分と仮定しました', '夕方を17時としました'];
+    applyRevision(
+      draft,
+      intent({ errands: [errand({ id: 'e2', title: '別の件名' })], stops: [], removedIds: ['e1'] }),
+    );
+    expect(draft.errands.map((e) => e.id)).toEqual(['e2']);
+    expect(draft.errands[0]?.title).toBe('予定c1');
+    expect(draft.homeBetween).toEqual([]);
+    expect(draft.assumptions).toEqual(['夕方を17時としました']);
   });
 });

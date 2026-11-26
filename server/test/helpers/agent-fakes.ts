@@ -58,6 +58,8 @@ export const decide = (data: DecideData) => ({
 /** AI の代用品。呼び出しの種類ごとに、決めた答えを（出力のスキーマを通して）返す */
 export function fakeAi(answers: {
   interpret?: unknown;
+  /** 修正（revise）の読み取り */
+  revise?: unknown;
   patch?: unknown;
   decide?: (data: DecideData) => unknown;
 }) {
@@ -70,7 +72,9 @@ export function fakeAi(answers: {
           ? (answers.interpret ?? intent())
           : call.operation === 'patch'
             ? answers.patch
-            : (answers.decide ?? decide)(call.data as DecideData);
+            : call.operation === 'revise'
+              ? answers.revise
+              : (answers.decide ?? decide)(call.data as DecideData);
       if (answer instanceof Error) throw answer;
       return call.schema.parse(answer);
     },

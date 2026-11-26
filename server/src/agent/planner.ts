@@ -1,9 +1,11 @@
 /**
- * 計画生成の流れ。入口（新規・確認への回答）ごとに始める位置が違うだけで、
+ * 計画生成の流れ。入口（新規・確認への回答・修正・項目の削除）ごとに始める位置が違うだけで、
  * 場所の確定から先（advance）と保存（savePlan）は共通。
  *
  *   新規：読み取り（AI①）→ 下書き → 予定の一覧（必要なときだけ）→ advance
  *   回答：回答の反映（自由入力は AI①の差分）→ advance
+ *   修正：修正指示の読み取り（AI①）→ 下書きに反映 → advance（確認はせず、仮定で埋める）
+ *   削除：下書きから外す → advance（立寄りの削除なら、店と判断文はそのまま使い、AI を呼ばない）
  *   advance：場所の確定 → 確認（場所の候補・質問。2回まで）→ 店の候補 → 判断（AI②）
  *            → 選択の検証 → 経路の取得と組み立て → 名称の検証
  *
@@ -17,7 +19,7 @@ import type { Db } from '../db/client.js';
 import { repositories } from '../db/repositories/index.js';
 import type { NewAgentSession } from '../db/repositories/agent-session-repository.js';
 import type { Plan } from '../db/repositories/plan-repository.js';
-import { plan as planTable } from '../db/schema.js';
+import { plan as planTable, planItem, slotEvaluation } from '../db/schema.js';
 import { AppError, validationError } from '../errors.js';
 import { RateLimitedError } from '../rate-limit.js';
 import type { Ai } from './ai.js';
@@ -26,6 +28,7 @@ import type { PlanContext } from './context.js';
 import {
   applyPatch,
   applyPlaceChoice,
+  applyRevision,
   applySelection,
   assume,
   createDraft,
@@ -34,6 +37,7 @@ import {
   needsSelection,
   nextPending,
   reconcile,
+  removeFromDraft,
   selectedErrands,
   selectedStops,
   setSpot,
@@ -225,12 +229,159 @@ export async function answerPlan(
   return advance(deps, ctx, draft, plan.clarificationCount, plan.inputText, sessions);
 }
 
+export interface Revision {
+  instruction: string;
+  /** 画面が保持している品目（立寄りの ID ごと）。AI①に渡すだけで、保存しない */
+  purchaseItems?: { sourceId: string; items: string[] }[];
+}
+type Completed = Pick<Plan, 'draft' | 'clarificationCount' | 'inputText'>;
+
+/** 修正：修正指示を読み取り（AI①）、下書きに反映して作り直す。計画が完成しなければ、何も変えない */
+export async function revisePlan(
+  deps: PlannerDeps,
+  ctx: PlanContext,
+  plan: Completed,
+  request: Revision,
+): Promise<Outcome> {
+  const now = deps.now();
+  const draft = structuredClone(plan.draft) as Draft;
+  reconcile(draft, ctx);
+  const date = draft.date === jstDate(now) ? 'today' : 'tomorrow';
+  const stops = selectedStops(draft);
+  const started = startedErrands(draft, now);
+  const kept = (request.purchaseItems ?? []).filter((p) => stops.some((s) => s.id === p.sourceId));
+  // 予定（カレンダー・ルーティン）は読み直さない
+  const intent = await deps.ai.callTool(
+    interpretCall({
+      now: toIso(now),
+      text: request.instruction,
+      events: [],
+      current: {
+        date,
+        mode: draft.mode,
+        errands: selectedErrands(draft).map((e) => ({
+          id: e.id,
+          title: e.title,
+          kind: e.kind,
+          place: e.place ?? null,
+          placeIsSpecific: e.specific,
+          startTime: timeOf(e.start),
+          endTime: timeOf(e.end),
+        })),
+        stops: stops.map(({ id, category, chain, perishable }) => ({
+          id,
+          category,
+          chain: chain ?? null,
+          perishable,
+        })),
+        purchaseItems: Object.fromEntries(kept.map((p) => [p.sourceId, p.items])),
+      },
+    }),
+  );
+  if (intent.rejected) throw invalid('instruction', '計画の修正の内容を入力してください');
+  const revised = applyRevision(draft, intent);
+  refuseStarted(draft, started);
+  if (intent.date !== date) {
+    revised.warnings.push('対象日は変更できません。日付はそのままで作り直しました');
+  }
+  if (selectedErrands(draft).length + selectedStops(draft).length === 0) {
+    throw invalid('instruction', '用事か立寄りを1件以上残してください');
+  }
+  const sessions: Session[] = [
+    {
+      sessionType: 'intent',
+      inputSummary: `修正 ${[...request.instruction].length}文字`,
+      outputSummary: `用事 ${intent.errands.length}件、立寄り ${intent.stops.length}件、取りやめ ${intent.removedIds.length}件`,
+    },
+  ];
+  const text = `${plan.inputText}\n${request.instruction}`;
+  const outcome = await advance(
+    deps,
+    ctx,
+    draft,
+    plan.clarificationCount,
+    text,
+    sessions,
+    'assume',
+  );
+  if (outcome.status !== 'completed') {
+    throw invalid('instruction', outcome.warnings.at(-1) ?? '計画を作れませんでした');
+  }
+  // 品目：AI が返した立寄りはその品目、返さなかった立寄りは画面が持っていた品目
+  const items = new Map([
+    ...kept.map((p) => [p.sourceId, p.items] as const),
+    ...intent.stops.map((stop, index) => [revised.stopIds[index] ?? '', stop.items] as const),
+  ]);
+  return {
+    ...outcome,
+    warnings: [...revised.warnings, ...outcome.warnings],
+    purchaseItems: selectedStops(draft)
+      .map((s) => ({ sourceId: s.id, items: items.get(s.id) ?? [] }))
+      .filter((p) => p.items.length > 0),
+  };
+}
+
+/**
+ * 項目の削除：元の用事・立寄り（sourceId）を下書きから外して作り直す。
+ * 立寄りの削除なら、残りの店と判断文をそのまま使う。用事の削除なら、店の候補から取り直す
+ */
+export async function removeItem(
+  deps: PlannerDeps,
+  ctx: PlanContext,
+  plan: Completed,
+  sourceId: string | null,
+): Promise<Outcome> {
+  const refuse = (message: string) => conflict('NOT_DELETABLE', message);
+  if (!sourceId) throw refuse('出発・移動・帰宅の項目は削除できません');
+  const draft = structuredClone(plan.draft) as Draft;
+  const before = JSON.stringify(draft.errands);
+  const started = startedErrands(draft, deps.now());
+  reconcile(draft, ctx);
+  removeFromDraft(draft, new Set([sourceId]));
+  refuseStarted(draft, started);
+  if (selectedErrands(draft).length + selectedStops(draft).length === 0) {
+    throw refuse('用事も立寄りも残らなくなる項目は削除できません');
+  }
+  // 用事が変わらなければ（立寄りの削除で、設定の変更で落ちた予定も無い）、店を選び直さない
+  const mode = JSON.stringify(draft.errands) === before ? 'reuse' : 'assume';
+  const outcome = await advance(
+    deps,
+    ctx,
+    draft,
+    plan.clarificationCount,
+    plan.inputText,
+    [],
+    mode,
+  );
+  if (outcome.status !== 'completed') throw refuse('この項目を削除すると、計画を作れません');
+  return outcome;
+}
+
+/** すでに始まっている用事（ID と開始）。作り直すと、いまから向かう計画になってしまう */
+const startedErrands = (draft: Draft, now: Date) =>
+  selectedErrands(draft)
+    .filter((e) => e.start && Date.parse(e.start) <= now.getTime())
+    .map((e) => `${e.id}@${e.start}`);
+/** 始まっている用事が、変えずに残っていたら 409 */
+function refuseStarted(draft: Draft, started: string[]): void {
+  if (selectedErrands(draft).some((e) => started.includes(`${e.id}@${e.start}`))) {
+    throw conflict(
+      'PLAN_EXPIRED',
+      'すでに始まっている用事があるため、作り直せません。新しく計画を作ってください',
+    );
+  }
+}
+
 const calendarWarning = (draft: Draft) =>
   draft.calendarFailed
     ? ['カレンダーの予定を取得できなかったため、予定なしで計画を作りました']
     : [];
 
-/** 場所の確定から、組み立てまで */
+/**
+ * 場所の確定から、組み立てまで。
+ * mode：ask＝足りない項目を質問する／assume＝質問せず仮定で埋める（修正・削除）／
+ * reuse＝assume に加えて、下書きの店と判断文をそのまま使う（立寄りの削除。AI を呼ばない）
+ */
 async function advance(
   deps: PlannerDeps,
   ctx: PlanContext,
@@ -238,6 +389,7 @@ async function advance(
   asked: number,
   inputText: string,
   sessions: Session[],
+  mode: 'ask' | 'assume' | 'reuse' = 'ask',
 ): Promise<Outcome> {
   const now = deps.now();
   const home = ctx.home;
@@ -266,7 +418,7 @@ async function advance(
 
   // 確認（2回まで）。上限に達したら、残りは仮定で埋める
   const pending = nextPending(draft, candidates, now);
-  if (pending && asked < MAX_QUESTIONS) {
+  if (pending && mode === 'ask' && asked < MAX_QUESTIONS) {
     draft.pending = pending;
     sessions.push({
       sessionType: 'clarify',
@@ -313,10 +465,27 @@ async function advance(
     ...(last && last !== first ? anchorOf(last) : []),
   ];
   const priority = ctx.user.priorityCondition as 'on_time' | 'save_money' | 'points';
-  const found = await findStores(deps.maps, stops, anchors, {
-    programs: ctx.programs,
-    pointsFirst: priority === 'points',
-  });
+  // 下書きの店を使うとき：選んであった店を先頭の候補（c0）にして、そのまま選ばせる
+  const kept = mode === 'reuse' ? stops.filter((s) => s.options && s.anchor && s.when) : [];
+  const found =
+    mode === 'reuse'
+      ? {
+          candidates: kept.flatMap((s) =>
+            (s.options ?? []).map((store, index) => ({
+              stopId: s.id,
+              candidate: `c${index}`,
+              anchor: s.anchor ?? 'home',
+              when: [s.when ?? 'after'],
+              distanceMeters: 0,
+              store,
+            })),
+          ),
+          failedStopIds: [],
+        }
+      : await findStores(deps.maps, stops, anchors, {
+          programs: ctx.programs,
+          pointsFirst: priority === 'points',
+        });
 
   // 判断（AI②）。形が合わない出力は、時間が残っていれば1回だけやり直す
   const decide = () =>
@@ -351,14 +520,20 @@ async function advance(
         })),
       }),
     );
-  const decisions = await decide().catch((error: unknown) => {
-    const retry =
-      error instanceof ExternalApiError &&
-      error.kind === 'invalid_response' &&
-      deps.remainingMs() > 6000;
-    if (retry) return decide();
-    throw error;
-  });
+  const decisions =
+    mode === 'reuse'
+      ? {
+          slots: draft.slots ?? [],
+          stopovers: kept.map((s) => ({ stopId: s.id, candidate: 'c0', when: s.when ?? 'after' })),
+        }
+      : await decide().catch((error: unknown) => {
+          const retry =
+            error instanceof ExternalApiError &&
+            error.kind === 'invalid_response' &&
+            deps.remainingMs() > 6000;
+          if (retry) return decide();
+          throw error;
+        });
 
   // 選択の検証：候補に無い番号は使わない。選ばれなかった立寄りは外す
   for (const stop of stops) {
@@ -444,13 +619,15 @@ async function advance(
   }
 
   // 名称の検証：AI の文（判断文・仮定）に、確認の取れない駅名があれば捨てる。
-  // 立寄りが1件も残らなかったときの、立寄りのスロットの判断文は、定型文にする
+  // 往路・復路に立寄りが入らなかったときの、立寄りのスロットの判断文は、定型文にする
   const unknown = (text: string) => hasUnknownStation(text, composed.stations, sources);
-  const noStops = stops.length > 0 && stops.every((s) => !s.options);
+  const hasStop = (type: 'OUTBOUND' | 'RETURN') =>
+    composed.items.some((i) => i.slotType === type && stops.some((s) => s.id === i.sourceId));
   draft.slots = decisions.slots.map(({ slot, decision }) => ({
     slot,
     decision:
-      noStops && (slot === 'outbound_stops' || slot === 'return_stops')
+      (slot === 'outbound_stops' && !hasStop('OUTBOUND')) ||
+      (slot === 'return_stops' && !hasStop('RETURN'))
         ? '立寄りはありません'
         : unknown(decision) || decision === ''
           ? '問題はありません'
@@ -484,6 +661,8 @@ export interface SaveArgs {
   retryAfterSeconds: number;
   /** 保存を終える期限（エポックミリ秒）。過ぎたら、すべて取り消す */
   saveBy: number;
+  /** 生成回数に数えない（項目の削除） */
+  free?: boolean;
 }
 
 /**
@@ -530,6 +709,9 @@ export async function savePlan(db: Db, args: SaveArgs) {
         )
         .returning();
       if (!plan) throw conflict('CONCURRENT_UPDATE', '計画が同時に更新されました');
+      // 修正・削除では、前の項目とスロット評価を入れ替える
+      await tx.delete(planItem).where(eq(planItem.planId, plan.id));
+      await tx.delete(slotEvaluation).where(eq(slotEvaluation.planId, plan.id));
     } else {
       plan = await repos.plans.create({ userId, inputText: args.inputText, ...values });
     }
@@ -570,7 +752,7 @@ export async function savePlan(db: Db, args: SaveArgs) {
     for (const session of outcome.sessions)
       await repos.agentSessions.insert({ planId, ...session });
     const quota = repos.generationQuotas;
-    const used = await (completed
+    const used = await (completed && !args.free
       ? quota.increment(userId, args.quotaDate)
       : quota.getUsedCount(userId, args.quotaDate));
     if (used > DAILY_LIMIT) throw new RateLimitedError(args.retryAfterSeconds);

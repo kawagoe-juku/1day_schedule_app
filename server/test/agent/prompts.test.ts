@@ -48,11 +48,11 @@ describe('Interpretation（読み取りの出力）', () => {
   it('上限を超えた件数・文字数は、切り詰めて受け入れる', () => {
     const parsed = Interpretation.parse({
       ...interpretation,
-      errands: Array.from({ length: 7 }, () => ({ ...errand, title: 'あ'.repeat(60) })),
+      errands: Array.from({ length: 12 }, () => ({ ...errand, title: 'あ'.repeat(60) })),
       stops: Array.from({ length: 12 }, () => interpretation.stops[0]),
       assumptions: ['い'.repeat(100), '', 'a', 'b', 'c'],
     });
-    expect(parsed.errands).toHaveLength(5);
+    expect(parsed.errands).toHaveLength(10);
     expect(parsed.errands[0]?.title).toHaveLength(40);
     expect(parsed.stops).toHaveLength(10);
     expect(parsed.assumptions).toEqual(['い'.repeat(80), 'a', 'b']);
@@ -185,7 +185,7 @@ describe('AI の呼び出しの定義', () => {
       now: '2026-11-20T10:00:00+09:00',
       text: 'パンは買わなくていい',
       events: [],
-      current: { errands: [], stops: [] },
+      current: { date: 'today', mode: 'train', errands: [], stops: [], purchaseItems: {} },
     });
     expect(call.operation).toBe('revise');
   });

@@ -23,7 +23,14 @@ export const GAP_MINUTES = 180;
 /** 仮定で場所を決めるとき、自宅からこの距離までの結果を使う */
 const ASSUME_WITHIN_METERS = 50_000;
 
-type Missing = 'place' | 'start' | 'end';
+const MISSING = ['place', 'start', 'end'] as const;
+type Missing = (typeof MISSING)[number];
+/** 仮定の文の書き出し（「（件名）」のあとに続く） */
+const ASSUMED_LABEL: Record<Missing, string> = {
+  place: 'の場所を',
+  start: 'の開始を',
+  end: 'の所要時間を',
+};
 
 /** その日の予定（カレンダー・ルーティン）。ref は c12（カレンダー）・r3（ルーティン）の形 */
 export interface PlanEvent {
@@ -132,6 +139,17 @@ export const selectedStops = (draft: Draft) => draft.stops.filter((s) => s.selec
 /** 一覧・質問で使う、仮の終了（終了が無ければ 60 分） */
 const endOf = (errand: DraftErrand) => errand.end ?? (errand.start && plus(errand.start, 60));
 
+/** 読み取った用事の、場所と時刻 */
+function inputValues(date: string, e: Interpretation['errands'][number]) {
+  const start = e.startTime ? atTime(date, e.startTime) : undefined;
+  return {
+    place: e.place ?? undefined,
+    specific: e.placeIsSpecific,
+    start,
+    end: e.endTime ? atTime(date, e.endTime, start) : undefined,
+  };
+}
+
 /**
  * 読み取り（AI①）の結果と、その日の予定から、下書きを作る。
  * 入力と同じ予定（sameAs）は入力の用事にまとめ、残りの予定は用事として並べる
@@ -143,13 +161,7 @@ export function createDraft(intent: Interpretation, events: PlanEvent[], now: Da
   const merged = new Set<string>();
 
   const errands: DraftErrand[] = intent.errands.map((e) => {
-    const start = e.startTime ? atTime(date, e.startTime) : undefined;
-    const own = {
-      place: e.place ?? undefined,
-      specific: e.placeIsSpecific,
-      start,
-      end: e.endTime ? atTime(date, e.endTime, start) : undefined,
-    };
+    const own = inputValues(date, e);
     const event = today.find((x) => x.ref === e.sameAs && !merged.has(x.ref));
     if (event) merged.add(event.ref);
     // まとめるとき：時刻は予定のもの。場所は、入力が固有の名称ならそれ、そうでなければ予定のもの
@@ -286,18 +298,100 @@ export function applyPatch(draft: Draft, errandId: string, patch: ErrandPatch): 
     // 自宅のすぐ近くとして「自宅で迎える」にしていた用事も、検索し直す
     if (errand.at === 'home' && !errand.needsPlace) errand.at = 'place';
   }
-  if (patch.startTime) changes.start = atTime(draft.date, patch.startTime);
-  const start = changes.start ?? errand.start;
+  // 修正では、変えていない値もそのまま返ってくる。同じ値は、変更として扱わない
+  const newStart = patch.startTime ? atTime(draft.date, patch.startTime) : errand.start;
+  if (newStart !== errand.start) changes.start = newStart;
+  const start = newStart;
   // 変わっていない終了を AI がそのまま返すことがある。新しい開始より前なら、終了の指定なしとして扱う
-  const echoed = patch.startTime && errand.end && patch.endTime === hhmm(errand.end);
+  const echoed = changes.start && errand.end && patch.endTime === hhmm(errand.end);
   // 開始が未定でも、答えた終了は残す
-  if (patch.endTime && !echoed) changes.end = atTime(draft.date, patch.endTime, start);
+  const newEnd = patch.endTime && !echoed ? atTime(draft.date, patch.endTime, start) : errand.end;
+  if (newEnd !== errand.end) changes.end = newEnd;
   Object.assign(errand, changes);
   if (errand.original) Object.assign(errand.original, changes);
   // 開始が終了より後になったら、終了は聞き直す
-  if (errand.start && errand.end && Date.parse(errand.end) <= Date.parse(errand.start)) {
-    delete errand.end;
+  const reversed = errand.start && errand.end && Date.parse(errand.end) <= Date.parse(errand.start);
+  if (reversed) delete errand.end;
+  // 変えた項目（と、聞き直す終了）は、仮定ではなくなる。仮定の文も消す
+  const cleared = MISSING.filter((m) => m in changes || (m === 'end' && reversed));
+  errand.assumed = errand.assumed.filter((m) => !cleared.includes(m));
+  draft.assumptions = draft.assumptions.filter(
+    (text) => !cleared.some((m) => text.startsWith(`「${errand.title}」${ASSUMED_LABEL[m]}`)),
+  );
+}
+
+/** 用事・立寄りを下書きから外す（修正での取りやめ、項目の削除）。その用事についての仮定も消す */
+export function removeFromDraft(draft: Draft, ids: ReadonlySet<string>): void {
+  const titles = draft.errands.filter((e) => ids.has(e.id)).map((e) => `「${e.title}」`);
+  draft.errands = draft.errands.filter((e) => !ids.has(e.id));
+  draft.stops = draft.stops.filter((s) => !ids.has(s.id));
+  draft.homeBetween = draft.homeBetween.filter((id) => !ids.has(id));
+  draft.assumptions = draft.assumptions.filter((text) => !titles.some((t) => text.includes(t)));
+}
+
+/**
+ * 修正（AI①）の結果を反映する。ID のあるものは下書きの用事・立寄りを書き換え、ID の無いものは足し、
+ * removedIds のものは外す。返されなかったものは、そのまま残す。
+ * 戻り値は、注意と、intent.stops と同じ並びの立寄りの ID（外したものは空文字）
+ */
+export function applyRevision(
+  draft: Draft,
+  intent: Interpretation,
+): { warnings: string[]; stopIds: string[] } {
+  const removed = new Set(intent.removedIds);
+  removeFromDraft(draft, removed);
+  for (const e of intent.errands) {
+    if (e.id && removed.has(e.id)) continue;
+    const existing = draft.errands.find((x) => x.selected && x.id === e.id);
+    if (existing) {
+      // 予定（カレンダー・ルーティン）の件名は、利用者が登録したものを保つ
+      if (existing.source === 'input') {
+        // 仮定の文の件名も、新しい件名に合わせる
+        draft.assumptions = draft.assumptions.map((text) =>
+          text.replace(`「${existing.title}」`, `「${e.title}」`),
+        );
+        Object.assign(existing, { title: e.title, kind: e.kind });
+      }
+      applyPatch(draft, existing.id, e);
+    } else {
+      draft.errands.push({
+        id: `e${draft.nextId++}`,
+        source: 'input',
+        title: e.title,
+        kind: e.kind,
+        at: 'place',
+        ...inputValues(draft.date, e),
+        assumed: [],
+        selected: true,
+      });
+    }
   }
+  const stopIds = intent.stops.map((s) => {
+    if (s.id && removed.has(s.id)) return '';
+    const values = { category: s.category, chain: s.chain ?? undefined, perishable: s.perishable };
+    const existing = draft.stops.find((x) => x.selected && x.id === s.id);
+    if (existing) return Object.assign(existing, values).id;
+    const id = `s${draft.nextId++}`;
+    draft.stops.push({ id, ...values, selected: true });
+    return id;
+  });
+  draft.mode = intent.mode;
+  if (intent.shoppingTime) draft.shoppingTime = intent.shoppingTime;
+  draft.assumptions = [...new Set([...draft.assumptions, ...intent.assumptions])];
+
+  // 5件を超えたら、開始の早い順（立寄りは下書きの順）に5件を残す
+  const cut = [
+    ...selectedErrands(draft).slice(MAX_ERRANDS),
+    ...selectedStops(draft).slice(MAX_STOPS),
+  ];
+  for (const item of cut) item.selected = false;
+  const warnings =
+    cut.length > 0
+      ? [
+          `用事は${MAX_ERRANDS}件、立寄りは${MAX_STOPS}件までのため、${cut.length}件を計画から外しました`,
+        ]
+      : [];
+  return { warnings, stopIds };
 }
 
 /** 場所の候補から選んだ回答を反映する。候補に無い ID は 400 */
@@ -414,18 +508,22 @@ export function assume(
         continue;
       }
       setSpot(errand, spot, home);
-      draft.assumptions.push(`「${errand.title}」の場所を「${spot.name}」と仮定しました`);
+      draft.assumptions.push(
+        `「${errand.title}」${ASSUMED_LABEL.place}「${spot.name}」と仮定しました`,
+      );
     }
     if (missing.includes('start')) {
       errand.start = jstDate(now) === draft.date ? soon : atTime(draft.date, '10:00');
       // 答えてあった終了は、仮定した開始より後なら残す
       if (errand.end && Date.parse(errand.end) <= Date.parse(errand.start)) delete errand.end;
-      draft.assumptions.push(`「${errand.title}」の開始を ${hhmm(errand.start)} と仮定しました`);
+      draft.assumptions.push(
+        `「${errand.title}」${ASSUMED_LABEL.start} ${hhmm(errand.start)} と仮定しました`,
+      );
     }
     if (errand.start && !errand.end) {
       const minutes = DURATION[errand.kind] ?? 60;
       errand.end = plus(errand.start, minutes);
-      draft.assumptions.push(`「${errand.title}」の所要時間を ${minutes} 分と仮定しました`);
+      draft.assumptions.push(`「${errand.title}」${ASSUMED_LABEL.end} ${minutes} 分と仮定しました`);
     }
     errand.assumed.push(...missing);
   }

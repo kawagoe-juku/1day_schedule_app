@@ -170,6 +170,9 @@ class PlansClient {
 
   /// 自然文の修正指示で計画を再生成する
   ///
+  /// 完成した計画（status=completed）だけを修正できる。確認はせず、足りない項目は仮定で埋める。
+  /// 成功したら生成回数を1回数える。失敗したとき（400・409・429・502）は、計画を変えない。
+  /// 対象日は変えられない（指示にあっても無視し、`warnings` に入れる）。
   /// サーバ処理は13秒で打ち切り（画面側のタイムアウト15秒より短くする）、`502 EXTERNAL_SERVICE_ERROR` を返す。打ち切った場合は生成回数に数えない。
   Future<models.Plan> revisePlan({
     Map<String, Object?> extra = const {
@@ -223,6 +226,10 @@ class PlansClient {
   }
 
   /// 行動項目を削除し、影響するスロットを再評価する
+  ///
+  /// 完成した計画（status=completed）の、用事・立寄り・食事の項目を削除して、計画を作り直す
+  /// （項目の ID は振り直される）。出発・移動・帰宅の項目と、用事も立寄りも残らなくなる削除は
+  /// `409`（`NOT_DELETABLE`）。生成回数には数えない。失敗したときは、計画を変えない。
   Future<models.Plan> deletePlanItem({
     Map<String, Object?> extra = const {
       "openapi.servers": [
