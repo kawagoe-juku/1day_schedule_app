@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ExternalApiError } from '../../src/adapters/http.js';
 import type { PlanContext } from '../../src/agent/context.js';
-import type { PlanEvent } from '../../src/agent/draft.js';
 import {
   answerPlan,
   hasUnknownStation,
+  removeItem,
+  revisePlan,
   startPlan,
   type Outcome,
   type PlannerDeps,
@@ -17,6 +18,7 @@ import {
   at,
   decide,
   errand,
+  event,
   fakeAi,
   fakeMaps,
   HOME,
@@ -61,16 +63,6 @@ function setup(
   return { deps, calls, searches };
 }
 
-const event = (ref: string, start: string, end: string, overrides: Partial<PlanEvent> = {}) => ({
-  ref,
-  source: 'calendar' as const,
-  date: '2026-11-25',
-  title: `予定${ref}`,
-  place: '新宿駅',
-  start: at(start),
-  end: at(end),
-  ...overrides,
-});
 /** 保存された計画の代わり（回答のテスト用） */
 const saved = (outcome: Outcome) => ({
   draft: outcome.draft,
@@ -396,7 +388,8 @@ describe('整合性チェック', () => {
         slots: SLOT_IDS.map((slot, i) => ({
           slot,
           decision:
-            ['渋谷駅で乗り換えます', '東京駅には余裕で着きます', '三軒茶屋駅から乗ります'][i] ?? '',
+            ['渋谷駅で乗り換えます', '東京駅には余裕で着きます', '', '三軒茶屋駅から乗ります'][i] ??
+            '',
         })),
       }),
     });
@@ -404,8 +397,9 @@ describe('整合性チェック', () => {
     expect(outcome.draft.slots?.slice(0, 4).map((s) => s.decision)).toEqual([
       '問題はありません',
       '東京駅には余裕で着きます',
+      // 往路に立寄りが無いので、定型文
+      '立寄りはありません',
       '三軒茶屋駅から乗ります',
-      '問題はありません',
     ]);
     expect(outcome.assumptions).toEqual(['夕方を17時と解釈']);
   });
@@ -463,6 +457,21 @@ describe('整合性チェック', () => {
     deps.remainingMs = () => 3000;
     await expect(startPlan(deps, context(), INPUT)).rejects.toBeInstanceOf(ExternalApiError);
     expect(late.count()).toBe(1);
+  });
+
+  it('締め切りを過ぎていたら、場所・店の検索も判断も始めない', async () => {
+    const { deps, calls, searches } = setup();
+    deps.remainingMs = () => 0;
+    await expect(startPlan(deps, context(), INPUT)).rejects.toMatchObject({ kind: 'timeout' });
+    expect(calls.map((c) => c.operation)).toEqual(['interpret']);
+    expect(searches).toEqual([]);
+  });
+
+  it('店が見つからず外した立寄りは、選択からも外す（件数の上限に数えない）', async () => {
+    const { deps } = setup({}, { stores: () => [] });
+    const outcome = await startPlan(deps, context(), INPUT);
+    expect(outcome.status).toBe('completed');
+    expect(outcome.draft.stops).toMatchObject([{ id: 's2', selected: false }]);
   });
 
   it('場所が決まらず、用事も立寄りも残らなければ、エラーの計画にする', async () => {
@@ -534,5 +543,234 @@ describe('hasUnknownStation', () => {
   it('どこにも無い駅名は、知らない名称として扱う', () => {
     expect(hasUnknownStation('品川駅で乗り換えます', stations, '東京駅に13時')).toBe(true);
     expect(hasUnknownStation('東京駅と新橋駅', stations, '')).toBe(true);
+  });
+});
+
+describe('revisePlan（修正）', () => {
+  const KEEP = errand({ id: 'e1' });
+  const STOP = { ...SUPERMARKET, id: 's2' };
+  /** 完成した計画を作り、修正する */
+  async function revise(
+    answer: Record<string, unknown>,
+    request: Parameters<typeof revisePlan>[3] = { instruction: 'パンは買わなくていい' },
+    now = NOW,
+  ) {
+    const { deps, calls, searches } = setup({ revise: intent(answer) });
+    const first = await startPlan(deps, context(), INPUT);
+    const before = { calls: calls.length, searches: searches.length };
+    const outcome = await revisePlan({ ...deps, now: () => now }, context(), saved(first), request);
+    return { outcome, calls: calls.slice(before.calls), searches: searches.slice(before.searches) };
+  }
+
+  it('取りやめた立寄りを外して作り直す。確定した場所は検索し直さない', async () => {
+    const { outcome, calls, searches } = await revise(
+      { errands: [KEEP], stops: [], removedIds: ['s2'] },
+      {
+        instruction: '買い物はやめる',
+        purchaseItems: [
+          { sourceId: 's2', items: ['カレーの食材'] },
+          { sourceId: 's9', items: ['知らない立寄り'] },
+        ],
+      },
+    );
+    expect(outcome.status).toBe('completed');
+    expect(titles(outcome)).toEqual([
+      '自宅を出発',
+      '電車で東京駅へ',
+      '待ち合わせ',
+      '電車で自宅へ',
+      '帰宅',
+    ]);
+    expect(calls.map((c) => c.operation)).toEqual(['revise', 'decide']);
+    // いまの計画（選択中のもの）と、画面が持っていた品目だけを渡す。予定は読み直さない
+    expect(calls[0]?.data).toMatchObject({
+      text: '買い物はやめる',
+      events: [],
+      current: {
+        date: 'today',
+        mode: 'train',
+        errands: [{ id: 'e1', place: '東京駅', startTime: '13:00', endTime: '14:00' }],
+        stops: [{ id: 's2', category: 'supermarket' }],
+        purchaseItems: { s2: ['カレーの食材'] },
+      },
+    });
+    expect(searches.filter((s) => s.fields === 'basic')).toEqual([]);
+    expect(outcome.purchaseItems).toEqual([]);
+    expect(outcome.questions).toBe(0);
+    expect(outcome.draft.slots?.find((s) => s.slot === 'return_stops')?.decision).toBe(
+      '立寄りはありません',
+    );
+  });
+
+  it('時刻の変更と立寄りの追加。足りない終了は、質問せずに仮定で埋める', async () => {
+    const { outcome } = await revise({
+      // 開始だけを変え、終了は元の値（14:00）を写して返してきた
+      errands: [errand({ id: 'e1', startTime: '15:00' })],
+      stops: [
+        { ...STOP, items: ['カレーの食材', '牛乳'] },
+        { ...SUPERMARKET, category: 'drugstore', items: ['洗剤'] },
+      ],
+    });
+    expect(outcome.status).toBe('completed');
+    expect(outcome.draft.errands[0]).toMatchObject({
+      start: at('15:00'),
+      end: at('16:00'),
+      assumed: ['end'],
+    });
+    expect(outcome.assumptions).toContain('「待ち合わせ」の所要時間を 60 分と仮定しました');
+    expect(outcome.draft.stops.map((s) => s.id)).toEqual(['s2', 's3']);
+    expect(outcome.purchaseItems).toEqual([
+      { sourceId: 's2', items: ['カレーの食材', '牛乳'] },
+      { sourceId: 's3', items: ['洗剤'] },
+    ]);
+  });
+
+  it('返されなかった用事・立寄りは、そのまま残す。対象日の変更は受け付けず、注意に入れる', async () => {
+    const { outcome } = await revise({ date: 'tomorrow', errands: [], stops: [] });
+    expect(outcome.draft.date).toBe('2026-11-25');
+    expect(titles(outcome)).toContain('待ち合わせ');
+    expect(titles(outcome)).toContain('サンプルスーパー自宅前店');
+    expect(outcome.warnings).toEqual(['対象日は変更できません。日付はそのままで作り直しました']);
+  });
+
+  it('すでに始まっている用事が残る修正は 409（PLAN_EXPIRED）。その用事を変える・やめる修正はできる', async () => {
+    const later = new Date(at('13:30'));
+    await expect(
+      revise({ errands: [KEEP], stops: [], removedIds: ['s2'] }, undefined, later),
+    ).rejects.toMatchObject({ statusCode: 409, details: [{ field: 'PLAN_EXPIRED' }] });
+    const moved = await revise(
+      { errands: [errand({ id: 'e1', startTime: '16:00', endTime: '17:00' })], stops: [STOP] },
+      undefined,
+      later,
+    );
+    expect(moved.outcome.draft.errands[0]).toMatchObject({ start: at('16:00'), end: at('17:00') });
+    const dropped = await revise(
+      { errands: [], stops: [STOP], removedIds: ['e1'] },
+      undefined,
+      later,
+    );
+    expect(titles(dropped.outcome)).not.toContain('待ち合わせ');
+  });
+
+  it('AI が返さなかった立寄りの品目は、画面が持っていたものを返す', async () => {
+    const { outcome } = await revise(
+      { errands: [errand({ id: 'e1', startTime: '15:00', endTime: '16:00' })], stops: [] },
+      { instruction: '15時からにして', purchaseItems: [{ sourceId: 's2', items: ['米'] }] },
+    );
+    expect(outcome.purchaseItems).toEqual([{ sourceId: 's2', items: ['米'] }]);
+  });
+
+  it('仮定で埋めた値を直したら、その仮定の文を消す', async () => {
+    const { deps } = setup({
+      interpret: intent({ errands: [errand({ endTime: null })] }),
+      patch: { place: null, placeIsSpecific: true, startTime: null, endTime: null },
+      revise: intent({ errands: [errand({ id: 'e1', endTime: '15:30' })], stops: [] }),
+    });
+    let outcome = await startPlan(deps, context(), INPUT);
+    while (outcome.status === 'clarifying') {
+      outcome = await answerPlan(deps, context(), saved(outcome), { answer: 'わからない' });
+    }
+    expect(outcome.assumptions).toEqual(['「待ち合わせ」の所要時間を 60 分と仮定しました']);
+    const revised = await revisePlan(deps, context(), saved(outcome), {
+      instruction: '15時半まで',
+    });
+    expect(revised.assumptions).toEqual([]);
+    expect(revised.draft.errands[0]).toMatchObject({ end: at('15:30'), assumed: [] });
+  });
+
+  it('何も残らない修正・計画と関係のない指示は 400', async () => {
+    await expect(
+      revise({ errands: [], stops: [], removedIds: ['e1', 's2'] }),
+    ).rejects.toMatchObject({ statusCode: 400, details: [{ field: 'instruction' }] });
+    await expect(revise({ rejected: true, errands: [], stops: [] })).rejects.toMatchObject({
+      statusCode: 400,
+    });
+  });
+
+  it('作り直しても計画にならなければ（店が見つからない）、400 にして何も変えない', async () => {
+    const { deps } = setup({
+      revise: intent({ errands: [], stops: [STOP], removedIds: ['e1'] }),
+    });
+    const first = await startPlan(deps, context(), INPUT);
+    const plan = saved(first);
+    const copy = structuredClone(plan.draft);
+    const empty = { ...deps, maps: fakeMaps({ stores: () => [] }).maps };
+    await expect(
+      revisePlan(empty, context(), plan, { instruction: '待ち合わせはやめる' }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      details: [{ message: '計画に入れられる用事・立寄りがありません' }],
+    });
+    expect(plan.draft).toEqual(copy);
+  });
+});
+
+describe('removeItem（項目の削除）', () => {
+  async function completed(answers: Parameters<typeof fakeAi>[0] = {}) {
+    const { deps, calls, searches } = setup(answers);
+    const first = await startPlan(deps, context(), INPUT);
+    calls.length = 0;
+    searches.length = 0;
+    return { deps, calls, searches, plan: saved(first) };
+  }
+
+  it('立寄りの削除は、AI も店の検索も呼ばずに作り直す', async () => {
+    const { deps, calls, searches, plan } = await completed({
+      interpret: intent({ stops: [SUPERMARKET, { ...SUPERMARKET, category: 'drugstore' }] }),
+    });
+    const outcome = await removeItem(deps, context(), plan, 's3');
+    expect(outcome.status).toBe('completed');
+    expect(calls).toEqual([]);
+    expect(searches).toEqual([]);
+    expect(outcome.draft.stops.map((s) => s.id)).toEqual(['s2']);
+    expect(titles(outcome)?.filter((t) => t.startsWith('サンプルスーパー'))).toHaveLength(1);
+    expect(outcome.purchaseItems).toBeUndefined();
+    expect(outcome.draft.slots?.map((s) => s.slot)).toEqual(SLOT_IDS);
+  });
+
+  it('往路の立寄りを消したら、往路の立寄りの判断文を定型文にする', async () => {
+    const { deps, plan } = await completed({
+      interpret: intent({ stops: [SUPERMARKET, { ...SUPERMARKET, category: 'drugstore' }] }),
+      decide: () => ({
+        slots: SLOT_IDS.map((slot) => ({ slot, decision: '買い物を済ませます' })),
+        stopovers: [
+          { stopId: 's2', candidate: 'c1', when: 'before' },
+          { stopId: 's3', candidate: 'c1', when: 'after' },
+        ],
+      }),
+    });
+    const slot = (o: { slots?: { slot: string; decision: string }[] }, id: string) =>
+      o.slots?.find((s) => s.slot === id)?.decision;
+    expect(slot(plan.draft, 'outbound_stops')).toBe('買い物を済ませます');
+    const outcome = await removeItem(deps, context(), plan, 's2');
+    expect(slot(outcome.draft, 'outbound_stops')).toBe('立寄りはありません');
+    expect(slot(outcome.draft, 'return_stops')).toBe('買い物を済ませます');
+  });
+
+  it('始まっている用事が残る削除は 409（PLAN_EXPIRED）', async () => {
+    const { deps, plan } = await completed();
+    const later = { ...deps, now: () => new Date(at('13:30')) };
+    await expect(removeItem(later, context(), plan, 's2')).rejects.toMatchObject({
+      statusCode: 409,
+      details: [{ field: 'PLAN_EXPIRED' }],
+    });
+  });
+
+  it('用事の削除は、店の候補から取り直す（AI②を呼ぶ）', async () => {
+    const { deps, calls, plan } = await completed();
+    const outcome = await removeItem(deps, context(), plan, 'e1');
+    expect(calls.map((c) => c.operation)).toEqual(['decide']);
+    expect(titles(outcome)).not.toContain('待ち合わせ');
+    expect(titles(outcome)).toContain('サンプルスーパー自宅前店');
+  });
+
+  it('出発・移動・帰宅の項目と、何も残らなくなる削除は 409（NOT_DELETABLE）', async () => {
+    const { deps, plan } = await completed({ interpret: intent({ stops: [] }) });
+    for (const sourceId of [null, 'e1']) {
+      await expect(removeItem(deps, context(), plan, sourceId)).rejects.toMatchObject({
+        statusCode: 409,
+        details: [{ field: 'NOT_DELETABLE' }],
+      });
+    }
   });
 });

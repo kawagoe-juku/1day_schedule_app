@@ -15,6 +15,7 @@ import { plan as planTable, user } from '../../src/db/schema.js';
 import type { PlanRouteOptions } from '../../src/routes/plans.js';
 import { SLOT_IDS } from '../../src/agent/slots.js';
 import {
+  decide,
   errand,
   fakeAi,
   fakeMaps,
@@ -78,23 +79,18 @@ async function setup(
     logger: false,
   });
   const server = app;
-  const post = (inputText = INPUT, userId = U1) =>
+  const call = (method: 'GET' | 'POST' | 'DELETE', path: string, payload?: unknown, userId = U1) =>
     server.inject({
-      method: 'POST',
-      url: '/agent/plans',
+      method,
+      url: `/agent/plans${path && `/${path}`}`,
       headers: auth(userId),
-      payload: { inputText },
+      ...(payload !== undefined && { payload: payload as Record<string, unknown> }),
     });
+  const post = (inputText = INPUT, userId = U1) => call('POST', '', { inputText }, userId);
   const clarify = (planId: number, payload: Record<string, unknown>, userId = U1) =>
-    server.inject({
-      method: 'POST',
-      url: `/agent/plans/${planId}/clarify`,
-      headers: auth(userId),
-      payload,
-    });
-  const get = (planId: number, userId = U1) =>
-    server.inject({ method: 'GET', url: `/agent/plans/${planId}`, headers: auth(userId) });
-  return { post, clarify, get, calls, repos: repositories(conn.db) };
+    call('POST', `${planId}/clarify`, payload, userId);
+  const get = (planId: number, userId = U1) => call('GET', `${planId}`, undefined, userId);
+  return { post, clarify, get, call, calls, repos: repositories(conn.db) };
 }
 const plansOf = (userId = U1) =>
   conn.db.select().from(planTable).where(eq(planTable.userId, userId));
@@ -201,6 +197,12 @@ describe('POST /agent/plans', () => {
     expect(await plansOf()).toHaveLength(0);
   });
 
+  it('入力文の NUL 文字は、取り除いて受け付ける（保存で失敗しない）', async () => {
+    const { post } = await setup();
+    expect((await post(`${INPUT}\u0000`)).statusCode).toBe(201);
+    expect((await plansOf())[0]?.inputText).toBe(INPUT);
+  });
+
   it('不適切な入力（AI の判定）は 400 で、計画を作らない', async () => {
     const { post } = await setup({ interpret: intent({ rejected: true, errands: [], stops: [] }) });
     const response = await post();
@@ -298,6 +300,8 @@ describe('GET /agent/plans/{planId}', () => {
     expect((await get(999_999_999)).statusCode).toBe(404);
     const invalid = await app!.inject({ method: 'GET', url: '/agent/plans/abc', headers: auth() });
     expect(invalid.statusCode).toBe(400);
+    // PostgreSQL の integer を超える ID も 400（500 にしない）
+    expect((await get(2_147_483_648)).statusCode).toBe(400);
   });
 });
 
@@ -465,14 +469,7 @@ describe('POST /agent/plans/{planId}/clarify', () => {
       patch: PATCH,
       decide: (data) => {
         if (fail) return new ExternalApiError('bedrock', 'decide', 'timeout');
-        return {
-          slots: SLOT_IDS.map((slot) => ({ slot, decision: '問題なし' })),
-          stopovers: data.candidates.slice(0, 1).map((c) => ({
-            stopId: c.stopId,
-            candidate: c.candidate,
-            when: c.when[0],
-          })),
-        };
+        return decide(data);
       },
     });
     const first = (await post()).json();
@@ -500,5 +497,159 @@ describe('POST /agent/plans/{planId}/clarify', () => {
     expect(await repos.planItems.listByPlan(first.id)).toHaveLength(done?.json().items.length);
     expect(await repos.slotEvaluations.listByPlan(first.id)).toHaveLength(SLOT_IDS.length);
     expect(await repos.generationQuotas.getUsedCount(U1, TODAY)).toBe(1);
+  });
+});
+
+describe('POST /agent/plans/{planId}/revise', () => {
+  const REVISED = intent({ errands: [errand({ id: 'e1' })], stops: [], removedIds: ['s2'] });
+  const body = {
+    instruction: '買い物はやめる',
+    purchaseItems: [{ sourceId: 's2', items: ['米'] }],
+  };
+
+  it('計画を作り直して入れ替える（項目は重複しない）。生成回数を1回数える', async () => {
+    const { post, call, repos } = await setup({ revise: REVISED });
+    const first = (await post()).json();
+    const response = await call('POST', `${first.id}/revise`, body);
+    expect(response.statusCode).toBe(200);
+    const plan = response.json();
+    expect(schemaErrors('Plan', plan)).toEqual([]);
+    expect(plan).toMatchObject({ id: first.id, status: 'completed', quota: { used: 2 } });
+    expect(plan.items.map((i: { itemType: string }) => i.itemType)).toEqual([
+      'departure',
+      'move',
+      'errand',
+      'move',
+      'return',
+    ]);
+    expect(await repos.planItems.listByPlan(first.id)).toHaveLength(5);
+    expect(await repos.slotEvaluations.listByPlan(first.id)).toHaveLength(SLOT_IDS.length);
+    expect((await repos.agentSessions.listByPlan(first.id)).map((s) => s.sessionType)).toEqual([
+      'intent',
+      'compose',
+      'intent',
+      'compose',
+    ]);
+    expect(await plansOf()).toHaveLength(1);
+  });
+
+  it('確認中の計画は 409（STATE_MISMATCH）。他の利用者の計画は 404。入力の誤りは 400', async () => {
+    const { post, call } = await setup({ interpret: NEEDS_QUESTION });
+    const first = (await post()).json();
+    const mismatch = await call('POST', `${first.id}/revise`, body);
+    expect(mismatch.statusCode).toBe(409);
+    expect(mismatch.json().error.details[0].field).toBe('STATE_MISMATCH');
+    await seedUser(U2);
+    expect((await call('POST', `${first.id}/revise`, body, U2)).statusCode).toBe(404);
+    for (const payload of [{}, { instruction: ' ' }, { instruction: 'a', extra: 1 }]) {
+      expect((await call('POST', `${first.id}/revise`, payload)).statusCode).toBe(400);
+    }
+  });
+
+  it('失敗したときは、計画を変えず、エラーの計画も作らない。生成回数も数えない', async () => {
+    const { post, call, get, repos } = await setup({
+      revise: new ExternalApiError('bedrock', 'revise', 'timeout'),
+    });
+    const first = (await post()).json();
+    expect((await call('POST', `${first.id}/revise`, body)).statusCode).toBe(502);
+    expect((await get(first.id)).json()).toMatchObject({ status: 'completed', items: first.items });
+    expect(await plansOf()).toHaveLength(1);
+    expect(await repos.generationQuotas.getUsedCount(U1, TODAY)).toBe(1);
+  });
+
+  it('同時に修正しても、反映されるのは1つだけ（項目は重複しない）', async () => {
+    const { post, call, repos } = await setup({ revise: REVISED });
+    const first = (await post()).json();
+    const responses = await Promise.all([
+      call('POST', `${first.id}/revise`, body),
+      call('POST', `${first.id}/revise`, body),
+    ]);
+    expect(responses.map((r) => r.statusCode).sort()).toEqual([200, 409]);
+    expect(await repos.planItems.listByPlan(first.id)).toHaveLength(5);
+    expect(await repos.generationQuotas.getUsedCount(U1, TODAY)).toBe(2);
+  });
+
+  it('その日の生成が 20 回に達していれば 429', async () => {
+    const { post, call, repos } = await setup({ revise: REVISED });
+    const first = (await post()).json();
+    for (let i = 1; i < 20; i++) await repos.generationQuotas.increment(U1, TODAY);
+    expect((await call('POST', `${first.id}/revise`, body)).statusCode).toBe(429);
+  });
+});
+
+describe('DELETE /agent/plans/{planId}/items/{itemId}', () => {
+  type Item = { id: number; itemType: string };
+  const idOf = (plan: { items: Item[] }, type: string) =>
+    plan.items.find((i) => i.itemType === type)?.id;
+
+  it('立寄りを削除して作り直す。生成回数は数えず、AI を呼ばない', async () => {
+    const { post, call, calls, repos } = await setup();
+    const first = (await post()).json();
+    calls.length = 0;
+    const response = await call('DELETE', `${first.id}/items/${idOf(first, 'stopover')}`);
+    expect(response.statusCode).toBe(200);
+    const plan = response.json();
+    expect(schemaErrors('Plan', plan)).toEqual([]);
+    expect(plan.items.map((i: Item) => i.itemType)).toEqual([
+      'departure',
+      'move',
+      'errand',
+      'move',
+      'return',
+    ]);
+    expect(plan.purchaseItems).toBeUndefined();
+    expect(plan.quota.used).toBe(1);
+    expect(calls).toEqual([]);
+    expect(await repos.planItems.listByPlan(first.id)).toHaveLength(5);
+    expect(await repos.generationQuotas.getUsedCount(U1, TODAY)).toBe(1);
+  });
+
+  it('1日の上限に達していても、削除はできる', async () => {
+    const { post, call, repos } = await setup();
+    const first = (await post()).json();
+    for (let i = 1; i < 20; i++) await repos.generationQuotas.increment(U1, TODAY);
+    const response = await call('DELETE', `${first.id}/items/${idOf(first, 'stopover')}`);
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('409（NOT_DELETABLE）：出発・移動・帰宅の項目／何も残らなくなる削除。計画は変わらない', async () => {
+    const { post, call, get } = await setup({ interpret: intent({ stops: [] }) });
+    const first = (await post()).json();
+    for (const type of ['departure', 'move', 'return', 'errand']) {
+      const response = await call('DELETE', `${first.id}/items/${idOf(first, type)}`);
+      expect(response.statusCode).toBe(409);
+      expect(response.json().error.details[0].field).toBe('NOT_DELETABLE');
+    }
+    expect((await get(first.id)).json().items).toEqual(first.items);
+  });
+
+  it('無い項目・他の計画の項目・他の利用者は 404。ID の形式が違えば 400', async () => {
+    const { post, call } = await setup();
+    const first = (await post()).json();
+    const second = (await post()).json();
+    const item = idOf(first, 'stopover');
+    expect((await call('DELETE', `${first.id}/items/999999999`)).statusCode).toBe(404);
+    expect((await call('DELETE', `${second.id}/items/${item}`)).statusCode).toBe(404);
+    await seedUser(U2);
+    expect((await call('DELETE', `${first.id}/items/${item}`, undefined, U2)).statusCode).toBe(404);
+    expect((await call('DELETE', `${first.id}/items/abc`)).statusCode).toBe(400);
+  });
+});
+
+describe('準備のみの API（replan・departure-detected）', () => {
+  it('入力を検証して、501（FEATURE_DISABLED）を返す。計画の存在は確かめない', async () => {
+    const { call } = await setup();
+    const replan = await call('POST', '1/replan', { delayMinutes: 30 });
+    expect(replan.statusCode).toBe(501);
+    expect(replan.json().error.code).toBe('FEATURE_DISABLED');
+    const departed = await call('POST', '1/departure-detected', {
+      actualDepartureTime: '2026-11-25T12:20:00+09:00',
+    });
+    expect(departed.statusCode).toBe(501);
+    expect((await call('POST', '1/replan', { delayMinutes: 0 })).statusCode).toBe(400);
+    expect((await call('POST', '1/replan', { delayMinutes: 241 })).statusCode).toBe(400);
+    const bad = await call('POST', '1/departure-detected', { actualDepartureTime: '12:20' });
+    expect(bad.statusCode).toBe(400);
+    expect((await call('POST', 'abc/replan', { delayMinutes: 30 })).statusCode).toBe(400);
   });
 });

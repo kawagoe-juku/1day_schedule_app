@@ -14,8 +14,11 @@ import {
   type OpeningPeriod,
 } from '../adapters/google-maps.js';
 import type { SlotType } from './slots.js';
+import { atJst, jstDate, jstTime as hhmm, MINUTE } from './time.js';
 
 export type Mode = 'train' | 'walk' | 'bicycle' | 'car';
+/** 利用者の優先条件 */
+export type Priority = 'on_time' | 'save_money' | 'points';
 
 export interface TravelRequest {
   from: LatLng;
@@ -108,7 +111,7 @@ export interface ComposeInput {
   /** 買い物だけのときの、出かける時刻（HH:mm） */
   shoppingTime?: string;
   preparationMinutes: number;
-  priority: 'on_time' | 'save_money' | 'points';
+  priority: Priority;
   /** 取り直しに使える時間が残っているか。false なら、取り直しは概算で行う */
   canRetry?: () => boolean;
 }
@@ -145,7 +148,6 @@ export interface Composed {
   stations: string[];
 }
 
-const MINUTE = 60_000;
 export const MODE_LABEL: Record<Mode, string> = {
   train: '電車',
   walk: '徒歩',
@@ -160,9 +162,6 @@ const marginOf = (input: ComposeInput) => (input.priority === 'on_time' ? 10 : 5
 const add = (date: Date, minutes: number) => new Date(date.getTime() + minutes * MINUTE);
 const minutesBetween = (from: Date, to: Date) =>
   Math.ceil((to.getTime() - from.getTime()) / MINUTE);
-const jst = (date: Date) => new Date(date.getTime() + 9 * 3600_000).toISOString();
-const hhmm = (date: Date) => jst(date).slice(11, 16);
-const atJst = (date: string, time: string) => new Date(`${date}T${time}:00+09:00`);
 const clip = (value: string, max: number) => [...value].slice(0, max).join('');
 const byStart = (a: { start: Date }, b: { start: Date }) => a.start.getTime() - b.start.getTime();
 
@@ -556,6 +555,17 @@ function toItems(routed: Routed[], input: ComposeInput, places: Places): Compose
     .map(({ item }) => item);
 }
 
+/** 買い物だけの外出の出発：指定の時刻。無ければ（過ぎていれば）、今日は「現在＋準備時間」、明日は 10:00 */
+export function shoppingStartOf(
+  input: Pick<ComposeInput, 'now' | 'date' | 'shoppingTime' | 'preparationMinutes'>,
+): Date {
+  const given = input.shoppingTime && new Date(atJst(input.date, input.shoppingTime));
+  if (given && given >= input.now) return given;
+  return jstDate(input.now) === input.date
+    ? add(input.now, input.preparationMinutes)
+    : new Date(atJst(input.date, '10:00'));
+}
+
 export async function composePlan(input: ComposeInput, travel: Travel): Promise<Composed> {
   const state: State = {
     homeBetween: new Set(input.homeBetween),
@@ -566,12 +576,7 @@ export async function composePlan(input: ComposeInput, travel: Travel): Promise<
   };
   const warnings: string[] = [];
 
-  // 買い物だけの外出の出発：指定の時刻。無ければ（過ぎていれば）、今日は「現在＋準備時間」、明日は 10:00
-  const today = jst(input.now).slice(0, 10) === input.date;
-  const soon = add(input.now, input.preparationMinutes);
-  const given = input.shoppingTime ? atJst(input.date, input.shoppingTime) : undefined;
-  const shoppingStart =
-    given && given >= input.now ? given : today ? soon : atJst(input.date, '10:00');
+  const shoppingStart = shoppingStartOf(input);
 
   let plan = outline(input, state, shoppingStart);
   let routed = await Promise.all(plan.segments.map((s) => route(s, input.mode, travel, false)));
@@ -621,7 +626,7 @@ export async function composePlan(input: ComposeInput, travel: Travel): Promise<
     return: routed.at(-1)?.end,
     warnings: [...new Set([...state.notes, ...warnings, ...result.warnings])],
     assumptions:
-      shoppingOnly && shoppingStart !== given
+      shoppingOnly && hhmm(shoppingStart) !== input.shoppingTime
         ? [`出発を ${hhmm(shoppingStart)} と仮定しました`]
         : [],
     droppedStopIds: [...state.dropped],

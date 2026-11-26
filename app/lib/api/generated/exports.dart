@@ -46,6 +46,7 @@ export 'plans/models/plan_item_type.dart';
 export 'plans/models/plan_purchase_items_item.dart';
 export 'plans/models/plan_status.dart';
 export 'plans/models/revise_request.dart';
+export 'plans/models/revise_request_purchase_items_item.dart';
 export 'plans/models/route.dart';
 export 'plans/models/route_step.dart';
 export 'plans/models/slot_type.dart';

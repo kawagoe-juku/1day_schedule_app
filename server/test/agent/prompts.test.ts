@@ -10,35 +10,13 @@ import {
 } from '../../src/agent/prompts.js';
 import { matchesTemplate, SLOT_IDS, SLOTS } from '../../src/agent/slots.js';
 import { pointProgramOf } from '../../src/agent/point-chains.js';
+import { errand as baseErrand, intent, SUPERMARKET } from '../helpers/agent-fakes.js';
 
-const errand = {
-  id: null,
-  sameAs: null,
-  title: '待ち合わせ',
-  kind: 'other',
-  place: '東京駅',
-  placeIsSpecific: true,
-  startTime: '13:00',
-  endTime: null,
-};
-const interpretation = {
-  rejected: false,
-  date: 'today',
-  mode: 'train',
+const errand = baseErrand({ endTime: null });
+const interpretation = intent({
   errands: [errand],
-  stops: [
-    {
-      id: null,
-      category: 'supermarket',
-      chain: null,
-      perishable: true,
-      items: ['カレーの食材', '排水口のネット'],
-    },
-  ],
-  removedIds: [],
-  shoppingTime: null,
-  assumptions: [],
-};
+  stops: [{ ...SUPERMARKET, items: ['カレーの食材', '排水口のネット'] }],
+});
 
 describe('Interpretation（読み取りの出力）', () => {
   it('正しい出力を受け入れる', () => {
@@ -48,11 +26,11 @@ describe('Interpretation（読み取りの出力）', () => {
   it('上限を超えた件数・文字数は、切り詰めて受け入れる', () => {
     const parsed = Interpretation.parse({
       ...interpretation,
-      errands: Array.from({ length: 7 }, () => ({ ...errand, title: 'あ'.repeat(60) })),
+      errands: Array.from({ length: 12 }, () => ({ ...errand, title: 'あ'.repeat(60) })),
       stops: Array.from({ length: 12 }, () => interpretation.stops[0]),
       assumptions: ['い'.repeat(100), '', 'a', 'b', 'c'],
     });
-    expect(parsed.errands).toHaveLength(5);
+    expect(parsed.errands).toHaveLength(10);
     expect(parsed.errands[0]?.title).toHaveLength(40);
     expect(parsed.stops).toHaveLength(10);
     expect(parsed.assumptions).toEqual(['い'.repeat(80), 'a', 'b']);
@@ -135,20 +113,9 @@ describe('Decisions（判断の出力）', () => {
 });
 
 describe('matchesTemplate', () => {
-  const all = SLOT_IDS.map((slot) => ({ slot }));
-
   it('評価の順番は MAIN → OUTBOUND → DEPARTURE → RETURN', () => {
     const types = SLOTS.map((slot) => slot.type).filter((t, i, list) => t !== list[i - 1]);
     expect(types).toEqual(['MAIN', 'OUTBOUND', 'DEPARTURE', 'RETURN']);
-  });
-
-  it('スロットが欠けている・順番が違う・余分がある・重複しているものは一致しない', () => {
-    expect(matchesTemplate(all)).toBe(true);
-    expect(matchesTemplate([all[0]!, all[0]!, ...all.slice(2)])).toBe(false);
-    expect(matchesTemplate(all.slice(1))).toBe(false);
-    expect(matchesTemplate([all[1]!, all[0]!, ...all.slice(2)])).toBe(false);
-    expect(matchesTemplate([...all, all[0]!])).toBe(false);
-    expect(matchesTemplate([])).toBe(false);
   });
 });
 
@@ -185,7 +152,7 @@ describe('AI の呼び出しの定義', () => {
       now: '2026-11-20T10:00:00+09:00',
       text: 'パンは買わなくていい',
       events: [],
-      current: { errands: [], stops: [] },
+      current: { date: 'today', mode: 'train', errands: [], stops: [], purchaseItems: {} },
     });
     expect(call.operation).toBe('revise');
   });

@@ -20,15 +20,17 @@ const optionalText = (maxLength: number) =>
     .nullable()
     .transform((value) => value || null);
 
-export const STORE_CATEGORIES = [
-  'supermarket',
-  'drugstore',
-  'convenience',
-  'home_center',
-  'bakery',
-  'restaurant',
-  'other',
-] as const;
+/** 店の種類と、その呼び名（店の検索語にも使う） */
+export const STORE_LABEL = {
+  supermarket: 'スーパー',
+  drugstore: 'ドラッグストア',
+  convenience: 'コンビニ',
+  home_center: 'ホームセンター',
+  bakery: 'パン屋',
+  restaurant: 'レストラン',
+  other: '買い物',
+} as const;
+export type StoreCategory = keyof typeof STORE_LABEL;
 
 /** 仮定の文（最大3件、各80文字） */
 const assumptions = z
@@ -51,7 +53,7 @@ const Errand = z.object({
 
 const Stop = z.object({
   id: id.nullable(),
-  category: z.enum(STORE_CATEGORIES),
+  category: z.enum(Object.keys(STORE_LABEL) as [StoreCategory, ...StoreCategory[]]),
   /** 店のチェーン名の指定（「マツキヨで」など）。無ければ null */
   chain: optionalText(40),
   /** 生鮮品・冷蔵品を含む */
@@ -64,7 +66,8 @@ export const Interpretation = z.object({
   rejected: z.boolean(),
   date: z.enum(['today', 'tomorrow', 'other']),
   mode: z.enum(['train', 'walk', 'bicycle', 'car']),
-  errands: z.array(Errand).transform((list) => list.slice(0, 5)),
+  // 計画に入れるのは 5 件まで。修正で 5 件を超えたことを注意に出せるよう、多めに受け取る
+  errands: z.array(Errand).transform((list) => list.slice(0, 10)),
   stops: z.array(Stop).transform((list) => list.slice(0, 10)),
   removedIds: z.array(id).transform((list) => list.slice(0, 20)),
   shoppingTime: time,
@@ -117,7 +120,13 @@ export interface InterpretInput {
   memos?: string[];
   events: DayEvent[];
   /** 修正のとき：いまの下書き（ID 付き）と、画面が持っている品目 */
-  current?: { errands: unknown[]; stops: unknown[]; purchaseItems?: Record<string, string[]> };
+  current?: {
+    date: 'today' | 'tomorrow';
+    mode: string;
+    errands: unknown[];
+    stops: unknown[];
+    purchaseItems: Record<string, string[]>;
+  };
 }
 
 const INTERPRET_SYSTEM = `あなたは、外出の計画を作るための「読み取り係」です。<data> の text（利用者の入力文）から、外出の用事と買い物を読み取り、submit_interpretation で提出します。
@@ -140,6 +149,8 @@ const INTERPRET_SYSTEM = `あなたは、外出の計画を作るための「読
 # 修正のとき（current があるとき）
 - text は、いまの計画（current）への修正指示です。current の用事・立寄りのうち、残すものは id を付けて返します。
 - 取りやめるものは、removedIds に id を入れます。新しく加わるものは id を null にします。
+- 指示で変える項目だけを書き換え、ほかの項目（件名・場所・時刻・店の種類）は current の値をそのまま返します。
+- date と mode は、指示で変えるとき以外は current の値をそのまま返します。shoppingTime は、指示で出かける時刻を変えるときだけ入れます。
 - current.purchaseItems は、いま買う予定の品目です。修正を反映した品目を items に入れます。`;
 
 const PATCH_SYSTEM = `あなたは、外出の計画を作るための「読み取り係」です。<data> の errand（用事）について、question（確認の質問）への answer（利用者の回答）から分かったことを、submit_patch で提出します。

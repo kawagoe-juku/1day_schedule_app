@@ -5,6 +5,7 @@ import type { GoogleMapsClient, Place, PlaceSearch } from '../../src/adapters/go
 import type { NavitimeClient, TransitRouteRequest } from '../../src/adapters/navitime.js';
 import type { Ai, AiCall } from '../../src/agent/ai.js';
 import type { Travel } from '../../src/agent/compose.js';
+import type { PlanEvent } from '../../src/agent/draft.js';
 import { SLOT_IDS } from '../../src/agent/slots.js';
 
 export const NOW = new Date('2026-11-25T09:00:00+09:00');
@@ -43,6 +44,23 @@ export const intent = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** その日の予定（ref が c で始まればカレンダー、それ以外はルーティン） */
+export const event = (
+  ref: string,
+  start: string,
+  end: string,
+  overrides: Partial<PlanEvent> = {},
+): PlanEvent => ({
+  ref,
+  source: ref.startsWith('c') ? 'calendar' : 'routine',
+  date: '2026-11-25',
+  title: `予定${ref}`,
+  place: '新宿駅',
+  start: at(start),
+  end: at(end),
+  ...overrides,
+});
+
 export interface DecideData {
   candidates: { stopId: string; candidate: string; when: string[] }[];
 }
@@ -58,6 +76,8 @@ export const decide = (data: DecideData) => ({
 /** AI の代用品。呼び出しの種類ごとに、決めた答えを（出力のスキーマを通して）返す */
 export function fakeAi(answers: {
   interpret?: unknown;
+  /** 修正（revise）の読み取り */
+  revise?: unknown;
   patch?: unknown;
   decide?: (data: DecideData) => unknown;
 }) {
@@ -70,7 +90,9 @@ export function fakeAi(answers: {
           ? (answers.interpret ?? intent())
           : call.operation === 'patch'
             ? answers.patch
-            : (answers.decide ?? decide)(call.data as DecideData);
+            : call.operation === 'revise'
+              ? answers.revise
+              : (answers.decide ?? decide)(call.data as DecideData);
       if (answer instanceof Error) throw answer;
       return call.schema.parse(answer);
     },

@@ -7,7 +7,8 @@ import type { LatLng } from '../adapters/google-maps.js';
 import type { Repositories } from '../db/repositories/index.js';
 import type { PointProgramCode } from '../db/repositories/point-program-repository.js';
 import type { User } from '../db/repositories/user-repository.js';
-import { jstDate, toIso, type PlanEvent } from './draft.js';
+import type { PlanEvent } from './draft.js';
+import { atJst, jstDate, toIso } from './time.js';
 
 /** AI に渡す件数の上限（予定は1日あたり） */
 const MAX_MEMO_LINES = 20;
@@ -116,8 +117,8 @@ export async function loadContext(
                 date,
                 title: r.routineName,
                 place: r.locationName ?? undefined,
-                start: `${date}T${r.startTime.slice(0, 5)}:00+09:00`,
-                end: `${date}T${r.endTime.slice(0, 5)}:00+09:00`,
+                start: atJst(date, r.startTime.slice(0, 5)),
+                end: atJst(date, r.endTime.slice(0, 5)),
               },
             ]
           : [],
