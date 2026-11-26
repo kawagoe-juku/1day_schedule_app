@@ -7,12 +7,18 @@
 import type { LatLng } from '../adapters/google-maps.js';
 import { distanceMeters } from '../adapters/google-maps.js';
 import { validationError } from '../errors.js';
-import { cleanText } from './ai.js';
+import { clip } from './ai.js';
 import type { Mode, Store } from './compose.js';
 import type { PlanContext } from './context.js';
 import type { Spot } from './lookup.js';
-import type { ErrandPatch, Interpretation } from './prompts.js';
+import {
+  STORE_LABEL,
+  type ErrandPatch,
+  type Interpretation,
+  type StoreCategory,
+} from './prompts.js';
 import type { SlotId } from './slots.js';
+import { atJst as atTime, jstDate, jstTime, MINUTE, toIso } from './time.js';
 
 export const MAX_ERRANDS = 5;
 export const MAX_STOPS = 5;
@@ -73,7 +79,7 @@ export interface DraftErrand {
 
 export interface DraftStop {
   id: string;
-  category: string;
+  category: StoreCategory;
   chain?: string;
   perishable: boolean;
   selected: boolean;
@@ -107,27 +113,26 @@ export interface Draft {
   /** 仮定の文（AI の読み取りと、不足を埋めたもの） */
   assumptions: string[];
   slots?: { slot: SlotId; decision: string }[];
-  selectionDone: boolean;
   /** 作り始めたときに、カレンダーの予定を取得できなかった（注意に出す） */
   calendarFailed?: boolean;
   pending?: Pending;
 }
 
-const MINUTE = 60_000;
-const jst = (date: Date) => new Date(date.getTime() + 9 * 3600_000).toISOString();
-export const jstDate = (date: Date) => jst(date).slice(0, 10);
-export const toIso = (date: Date) => `${jst(date).slice(0, 19)}+09:00`;
-export const hhmm = (iso: string) => jst(new Date(iso)).slice(11, 16);
+export const hhmm = (iso: string) => jstTime(new Date(iso));
 const plus = (iso: string, minutes: number) => toIso(new Date(Date.parse(iso) + minutes * MINUTE));
-const clip = (value: string, max: number) => [...cleanText(value)].slice(0, max).join('');
 // 「Meeting Room」「Teamsビル」のような実在の場所に当たらないよう、サービス名は絞って書く
 const ONLINE =
   /https?:|www\.|zoom|microsoft teams|teams(会議|ミーティング)|^teams$|google meet|meet\.google|webex|オンライン|リモート|ウェブ会議|web会議/i;
 
-/** 対象日の HH:mm を日時にする。after より前なら翌日（日をまたぐ用事の終了） */
-function atTime(date: string, time: string, after?: string): string {
-  const iso = `${date}T${time}:00+09:00`;
-  return after && Date.parse(iso) <= Date.parse(after) ? plus(iso, 24 * 60) : iso;
+/**
+ * 終了の日時。開始より前なら翌日（日をまたぐ用事）。
+ * 開始と同じ、または翌日にすると 12 時間を超えるものは、読み違いとして「終了なし」にする
+ */
+function endAt(date: string, time: string, start?: string): string | undefined {
+  const iso = atTime(date, time);
+  if (!start || Date.parse(iso) > Date.parse(start)) return iso;
+  const nextDay = plus(iso, 24 * 60);
+  return Date.parse(nextDay) - Date.parse(start) <= 12 * 60 * MINUTE ? nextDay : undefined;
 }
 
 /** 開始の順（開始の無いものは最後） */
@@ -146,7 +151,7 @@ function inputValues(date: string, e: Interpretation['errands'][number]) {
     place: e.place ?? undefined,
     specific: e.placeIsSpecific,
     start,
-    end: e.endTime ? atTime(date, e.endTime, start) : undefined,
+    end: e.endTime ? endAt(date, e.endTime, start) : undefined,
   };
 }
 
@@ -226,16 +231,14 @@ export function createDraft(intent: Interpretation, events: PlanEvent[], now: Da
     homeBetween: [],
     shoppingTime: intent.shoppingTime ?? undefined,
     assumptions: intent.assumptions,
-    selectionDone: false,
   };
 }
 
 /** 予定の一覧を出すか：用事が2件以上／立寄りが6件以上／迎え方を選ぶ予定がある */
 export const needsSelection = (draft: Draft) =>
-  !draft.selectionDone &&
-  (draft.errands.filter((e) => e.selected).length >= 2 ||
-    draft.stops.length > MAX_STOPS ||
-    draft.errands.some((e) => e.selected && e.needsPlace));
+  draft.errands.filter((e) => e.selected).length >= 2 ||
+  draft.stops.length > MAX_STOPS ||
+  draft.errands.some((e) => e.selected && e.needsPlace);
 
 export interface SelectionAnswer {
   selectedIds: string[];
@@ -281,7 +284,6 @@ export function applySelection(draft: Draft, answer: SelectionAnswer): void {
     const next = sorted[index + 1]?.start;
     return end && next && Date.parse(next) - Date.parse(end) >= GAP_MINUTES * MINUTE;
   });
-  draft.selectionDone = true;
 }
 
 /**
@@ -295,8 +297,8 @@ export function applyPatch(draft: Draft, errandId: string, patch: ErrandPatch): 
   if (patch.place && patch.place !== errand.place) {
     Object.assign(changes, { place: patch.place, specific: patch.placeIsSpecific });
     delete errand.spot;
-    // 自宅のすぐ近くとして「自宅で迎える」にしていた用事も、検索し直す
-    if (errand.at === 'home' && !errand.needsPlace) errand.at = 'place';
+    // 「自宅で迎える」「外出先で迎える」にしていた用事も、その場所を検索し直す
+    if (!errand.needsPlace) errand.at = 'place';
   }
   // 修正では、変えていない値もそのまま返ってくる。同じ値は、変更として扱わない
   const newStart = patch.startTime ? atTime(draft.date, patch.startTime) : errand.start;
@@ -305,7 +307,8 @@ export function applyPatch(draft: Draft, errandId: string, patch: ErrandPatch): 
   // 変わっていない終了を AI がそのまま返すことがある。新しい開始より前なら、終了の指定なしとして扱う
   const echoed = changes.start && errand.end && patch.endTime === hhmm(errand.end);
   // 開始が未定でも、答えた終了は残す
-  const newEnd = patch.endTime && !echoed ? atTime(draft.date, patch.endTime, start) : errand.end;
+  const newEnd =
+    (patch.endTime && !echoed && endAt(draft.date, patch.endTime, start)) || errand.end;
   if (newEnd !== errand.end) changes.end = newEnd;
   Object.assign(errand, changes);
   if (errand.original) Object.assign(errand.original, changes);
@@ -348,7 +351,8 @@ export function applyRevision(
       if (existing.source === 'input') {
         // 仮定の文の件名も、新しい件名に合わせる
         draft.assumptions = draft.assumptions.map((text) =>
-          text.replace(`「${existing.title}」`, `「${e.title}」`),
+          // 関数で渡す（件名の $& などを、置換の記号として読ませない）
+          text.replace(`「${existing.title}」`, () => `「${e.title}」`),
         );
         Object.assign(existing, { title: e.title, kind: e.kind });
       }
@@ -514,6 +518,12 @@ export function assume(
     }
     if (missing.includes('start')) {
       errand.start = jstDate(now) === draft.date ? soon : atTime(draft.date, '10:00');
+      // 23:30 を過ぎた今日の計画には、もう入れられない
+      if (Date.parse(errand.start) <= now.getTime()) {
+        errand.selected = false;
+        warnings.push(`「${errand.title}」は、今日のうちに始められないため、計画から外しました`);
+        continue;
+      }
       // 答えてあった終了は、仮定した開始より後なら残す
       if (errand.end && Date.parse(errand.end) <= Date.parse(errand.start)) delete errand.end;
       draft.assumptions.push(
@@ -561,18 +571,9 @@ export function reconcile(draft: Draft, ctx: Pick<PlanContext, 'user' | 'events'
   }
 }
 
-const CATEGORY_LABEL: Record<string, string> = {
-  supermarket: 'スーパー',
-  drugstore: 'ドラッグストア',
-  convenience: 'コンビニ',
-  home_center: 'ホームセンター',
-  bakery: 'パン屋',
-  restaurant: '食事',
-  other: '買い物',
-};
 /** 立寄りの呼び名（品目名は使わない） */
 export const stopLabel = (stop: Pick<DraftStop, 'category' | 'chain'>) =>
-  stop.chain ?? CATEGORY_LABEL[stop.category] ?? '買い物';
+  stop.chain ?? (stop.category === 'restaurant' ? '食事' : STORE_LABEL[stop.category]);
 
 /** API 仕様（openapi.yaml）の Clarification にする。count は、これまでの質問の回数 */
 export function toClarification(draft: Draft, count: number) {

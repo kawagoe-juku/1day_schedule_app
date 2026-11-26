@@ -84,7 +84,7 @@ describe('findStores', () => {
     { id: 'home', location: HOME, before: at('12:00'), after: at('15:00') },
     { id: 'e1', location: TOKYO, before: at('12:30'), after: at('14:00') },
   ];
-  const stops = [{ id: 's1', category: 'supermarket', chain: null }];
+  const stops = [{ id: 's1', category: 'supermarket' as const, chain: null }];
   const options = { programs: ['waon', 'ponta'] as const, pointsFirst: false };
   const allDay: [string, string] = ['00:00', '23:59'];
 
@@ -194,7 +194,7 @@ describe('findStores', () => {
     });
     const result = await findStores(
       maps,
-      [...stops, { id: 's2', category: 'convenience', chain: null }],
+      [...stops, { id: 's2', category: 'convenience' as const, chain: null }],
       anchors,
       options,
     );

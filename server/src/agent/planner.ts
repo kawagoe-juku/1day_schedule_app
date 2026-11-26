@@ -23,7 +23,14 @@ import { plan as planTable, planItem, slotEvaluation } from '../db/schema.js';
 import { AppError, validationError } from '../errors.js';
 import { RateLimitedError } from '../rate-limit.js';
 import type { Ai } from './ai.js';
-import { composePlan, type Composed, type ComposeErrand, type Travel } from './compose.js';
+import {
+  composePlan,
+  shoppingStartOf,
+  type Composed,
+  type ComposeErrand,
+  type Priority,
+  type Travel,
+} from './compose.js';
 import type { PlanContext } from './context.js';
 import {
   applyPatch,
@@ -32,7 +39,6 @@ import {
   applySelection,
   assume,
   createDraft,
-  jstDate,
   MAX_QUESTIONS,
   needsSelection,
   nextPending,
@@ -43,13 +49,20 @@ import {
   setSpot,
   stopLabel,
   hhmm,
-  toIso,
   type Draft,
   type DraftErrand,
+  type SelectionAnswer,
 } from './draft.js';
-import { findPlaces, findStores, type Spot, type StoreAnchor } from './lookup.js';
+import {
+  findPlaces,
+  findStores,
+  type Spot,
+  type StoreAnchor,
+  type TravelOptions,
+} from './lookup.js';
 import { decideCall, interpretCall, patchCall } from './prompts.js';
 import { SLOTS } from './slots.js';
+import { jstDate, toIso } from './time.js';
 
 export const DAILY_LIMIT = 20;
 
@@ -57,10 +70,7 @@ export interface PlannerDeps {
   ai: Ai;
   maps: GoogleMapsClient;
   /** 利用者の設定（歩く速さ・優先条件）に合わせた、移動の取得 */
-  travel: (options: {
-    walkingSpeed: 'slow' | 'normal' | 'fast';
-    priority: 'on_time' | 'save_money' | 'points';
-  }) => Travel;
+  travel: (options: TravelOptions) => Travel;
   now: () => Date;
   /** 期限までの残り時間（ミリ秒）。やり直し・取り直しをするかの判断に使う */
   remainingMs: () => number;
@@ -81,12 +91,7 @@ export interface Outcome {
   sessions: Session[];
 }
 
-export interface ClarifyAnswer {
-  answer?: string;
-  selectedIds?: string[];
-  places?: { id: string; at: 'home' | 'stay' | 'place'; text?: string }[];
-  homeBetween?: string[];
-}
+export type ClarifyAnswer = Partial<SelectionAnswer> & { answer?: string };
 
 /** 409 CONFLICT。理由（HOME_NOT_SET など）を details[].field に入れる */
 export const conflict = (reason: string, message: string) =>
@@ -175,7 +180,6 @@ export async function startPlan(
       sessions,
     };
   }
-  draft.selectionDone = true;
   return { ...(await advance(deps, ctx, draft, 0, inputText, sessions)), purchaseItems };
 }
 
@@ -404,7 +408,13 @@ async function advance(
     sessions,
   });
 
+  // 締め切りを過ぎていたら、外部の呼び出しを始めない（入口は応答を返し終えていて、結果は捨てられる）
+  const checkDeadline = () => {
+    if (deps.remainingMs() <= 0) throw new ExternalApiError('agent', 'deadline', 'timeout');
+  };
+
   // 場所の確定：固有の名称で、検索で見つかれば、その先頭を使う。それ以外は候補として残す
+  checkDeadline();
   const candidates = new Map<string, Spot[]>();
   await Promise.all(
     selectedErrands(draft)
@@ -437,133 +447,125 @@ async function advance(
     return outcome('error');
   }
 
-  // 店の候補：自宅・最初の用事・最後の用事の周辺
-  const visits = errands.filter((e) => e.at === 'place' && e.spot);
-  const first = visits[0];
-  const last = visits.at(-1);
-  const time = (iso: string | undefined, minutes = 0) =>
-    new Date(Date.parse(iso ?? '') + minutes * 60_000);
-  const shopping =
-    draft.shoppingTime !== undefined
-      ? new Date(`${draft.date}T${draft.shoppingTime}:00+09:00`)
-      : jstDate(now) === draft.date
-        ? new Date(now.getTime() + ctx.user.preparationTimeMinutes * 60_000)
-        : new Date(`${draft.date}T10:00:00+09:00`);
-  const anchorOf = (e: DraftErrand): StoreAnchor[] =>
-    e.spot
-      ? [{ id: e.id, location: e.spot.location, before: time(e.start), after: time(e.end) }]
-      : [];
-  const anchors: StoreAnchor[] = [
-    {
-      id: 'home',
-      location: home,
-      // 自宅の近くに寄る時刻の目安：最初の用事の1時間前と、最後の用事の30分後
-      before: first ? time(first.start, -60) : shopping,
-      after: last ? time(last.end, 30) : shopping,
-    },
-    ...(first ? anchorOf(first) : []),
-    ...(last && last !== first ? anchorOf(last) : []),
-  ];
-  const priority = ctx.user.priorityCondition as 'on_time' | 'save_money' | 'points';
-  // 下書きの店を使うとき：選んであった店を先頭の候補（c0）にして、そのまま選ばせる
-  const kept = mode === 'reuse' ? stops.filter((s) => s.options && s.anchor && s.when) : [];
-  const found =
-    mode === 'reuse'
-      ? {
-          candidates: kept.flatMap((s) =>
-            (s.options ?? []).map((store, index) => ({
-              stopId: s.id,
-              candidate: `c${index}`,
-              anchor: s.anchor ?? 'home',
-              when: [s.when ?? 'after'],
-              distanceMeters: 0,
-              store,
-            })),
-          ),
-          failedStopIds: [],
-        }
-      : await findStores(deps.maps, stops, anchors, {
-          programs: ctx.programs,
-          pointsFirst: priority === 'points',
-        });
-
-  // 判断（AI②）。形が合わない出力は、時間が残っていれば1回だけやり直す
-  const decide = () =>
-    deps.ai.callTool(
-      decideCall({
-        now: toIso(now),
-        mode: draft.mode,
-        priority,
-        errands: errands.map((e) => ({
-          id: e.id,
-          title: e.title,
-          kind: e.kind,
-          at: e.at,
-          place: e.spot?.name ?? null,
-          start: timeOf(e.start),
-          end: timeOf(e.end),
-        })),
-        stops: stops.map(({ id, category, chain, perishable }) => ({
-          id,
-          category,
-          chain: chain ?? null,
-          perishable,
-        })),
-        candidates: found.candidates.map((c) => ({
-          stopId: c.stopId,
-          candidate: c.candidate,
-          anchor: c.anchor,
-          when: c.when,
-          name: c.store.name,
-          distanceMeters: c.distanceMeters,
-          point: c.store.pointProgramCode ?? null,
-        })),
-      }),
-    );
-  const decisions =
-    mode === 'reuse'
-      ? {
-          slots: draft.slots ?? [],
-          stopovers: kept.map((s) => ({ stopId: s.id, candidate: 'c0', when: s.when ?? 'after' })),
-        }
-      : await decide().catch((error: unknown) => {
-          const retry =
-            error instanceof ExternalApiError &&
-            error.kind === 'invalid_response' &&
-            deps.remainingMs() > 6000;
-          if (retry) return decide();
-          throw error;
-        });
-
-  // 選択の検証：候補に無い番号は使わない。選ばれなかった立寄りは外す
-  for (const stop of stops) {
-    const choice = decisions.stopovers.find((s) => s.stopId === stop.id);
-    const picked = found.candidates.find(
-      (c) => c.stopId === stop.id && c.candidate === choice?.candidate,
-    );
-    delete stop.options;
-    if (!picked || !choice) {
-      warnings.push(
-        found.failedStopIds.includes(stop.id)
-          ? `店を検索できなかったため、「${stopLabel(stop)}」への立寄りを外しました`
-          : `寄れる店が見つからなかったため、「${stopLabel(stop)}」への立寄りを外しました`,
-      );
-      continue;
-    }
-    const when = picked.when.includes(choice.when) ? choice.when : (picked.when[0] ?? 'after');
-    const alternatives = found.candidates.filter(
-      (c) =>
-        c !== picked && c.stopId === stop.id && c.anchor === picked.anchor && c.when.includes(when),
-    );
-    Object.assign(stop, {
-      anchor: picked.anchor,
-      when,
-      options: [picked, ...alternatives].map((c) => c.store),
+  const priority = ctx.user.priorityCondition as Priority;
+  let slots = draft.slots ?? [];
+  let candidateCount = 0;
+  // 項目の削除で用事が変わらないとき（reuse）は、下書きの店と判断をそのまま使う
+  if (mode !== 'reuse') {
+    // 店の候補：自宅・最初の用事・最後の用事の周辺
+    checkDeadline();
+    const visits = errands.filter((e) => e.at === 'place' && e.spot);
+    const first = visits[0];
+    const last = visits.at(-1);
+    const time = (iso: string | undefined, minutes = 0) =>
+      new Date(Date.parse(iso ?? '') + minutes * 60_000);
+    const shopping = shoppingStartOf({
+      now,
+      date: draft.date,
+      shoppingTime: draft.shoppingTime,
+      preparationMinutes: ctx.user.preparationTimeMinutes,
     });
+    const anchorOf = (e: DraftErrand): StoreAnchor[] =>
+      e.spot
+        ? [{ id: e.id, location: e.spot.location, before: time(e.start), after: time(e.end) }]
+        : [];
+    const anchors: StoreAnchor[] = [
+      {
+        id: 'home',
+        location: home,
+        // 自宅の近くに寄る時刻の目安：最初の用事の1時間前と、最後の用事の30分後
+        before: first ? time(first.start, -60) : shopping,
+        after: last ? time(last.end, 30) : shopping,
+      },
+      ...(first ? anchorOf(first) : []),
+      ...(last && last !== first ? anchorOf(last) : []),
+    ];
+    const found = await findStores(deps.maps, stops, anchors, {
+      programs: ctx.programs,
+      pointsFirst: priority === 'points',
+    });
+
+    // 判断（AI②）。形が合わない出力は、時間が残っていれば1回だけやり直す
+    const decide = () =>
+      deps.ai.callTool(
+        decideCall({
+          now: toIso(now),
+          mode: draft.mode,
+          priority,
+          errands: errands.map((e) => ({
+            id: e.id,
+            title: e.title,
+            kind: e.kind,
+            at: e.at,
+            place: e.spot?.name ?? null,
+            start: timeOf(e.start),
+            end: timeOf(e.end),
+          })),
+          stops: stops.map(({ id, category, chain, perishable }) => ({
+            id,
+            category,
+            chain: chain ?? null,
+            perishable,
+          })),
+          candidates: found.candidates.map((c) => ({
+            stopId: c.stopId,
+            candidate: c.candidate,
+            anchor: c.anchor,
+            when: c.when,
+            name: c.store.name,
+            distanceMeters: c.distanceMeters,
+            point: c.store.pointProgramCode ?? null,
+          })),
+        }),
+      );
+    checkDeadline();
+    const decisions = await decide().catch((error: unknown) => {
+      const retry =
+        error instanceof ExternalApiError &&
+        error.kind === 'invalid_response' &&
+        deps.remainingMs() > 6000;
+      if (retry) return decide();
+      throw error;
+    });
+
+    // 選択の検証：候補に無い番号は使わない。選ばれなかった立寄りは外す
+    for (const stop of stops) {
+      const choice = decisions.stopovers.find((s) => s.stopId === stop.id);
+      const picked = found.candidates.find(
+        (c) => c.stopId === stop.id && c.candidate === choice?.candidate,
+      );
+      delete stop.options;
+      if (!picked || !choice) {
+        // 外した立寄りは、件数の上限に数えない
+        stop.selected = false;
+        warnings.push(
+          found.failedStopIds.includes(stop.id)
+            ? `店を検索できなかったため、「${stopLabel(stop)}」への立寄りを外しました`
+            : `寄れる店が見つからなかったため、「${stopLabel(stop)}」への立寄りを外しました`,
+        );
+        continue;
+      }
+      const when = picked.when.includes(choice.when) ? choice.when : (picked.when[0] ?? 'after');
+      const alternatives = found.candidates.filter(
+        (c) =>
+          c !== picked &&
+          c.stopId === stop.id &&
+          c.anchor === picked.anchor &&
+          c.when.includes(when),
+      );
+      Object.assign(stop, {
+        anchor: picked.anchor,
+        when,
+        options: [picked, ...alternatives].map((c) => c.store),
+      });
+    }
+    slots = decisions.slots;
+    candidateCount = found.candidates.length;
   }
 
   // 経路の取得と組み立て。件名の「◯◯駅」が入力文にも確定した場所名にも無ければ、場所名に置き換える
   // （予定の件名・場所は利用者が登録したものなので、そのまま使い、知っている名称にも入れる）
+  checkDeadline();
   const sources = [
     inputText,
     ...errands.flatMap((e) => [e.spot?.name, e.place, e.source !== 'input' && e.title]),
@@ -610,7 +612,8 @@ async function advance(
     }),
   );
   for (const stop of stops) {
-    if (composed.droppedStopIds.includes(stop.id)) delete stop.options;
+    if (composed.droppedStopIds.includes(stop.id))
+      Object.assign(stop, { options: undefined, selected: false });
   }
   // 立寄りがすべて外れて、何も残らなかったとき（生成回数は数えない）
   if (composed.items.length === 0) {
@@ -623,7 +626,7 @@ async function advance(
   const unknown = (text: string) => hasUnknownStation(text, composed.stations, sources);
   const hasStop = (type: 'OUTBOUND' | 'RETURN') =>
     composed.items.some((i) => i.slotType === type && stops.some((s) => s.id === i.sourceId));
-  draft.slots = decisions.slots.map(({ slot, decision }) => ({
+  draft.slots = slots.map(({ slot, decision }) => ({
     slot,
     decision:
       (slot === 'outbound_stops' && !hasStop('OUTBOUND')) ||
@@ -637,7 +640,7 @@ async function advance(
 
   sessions.push({
     sessionType: 'compose',
-    inputSummary: `用事 ${errands.length}件、立寄り ${stops.length}件、店の候補 ${found.candidates.length}件`,
+    inputSummary: `用事 ${errands.length}件、立寄り ${stops.length}件、店の候補 ${candidateCount}件`,
     outputSummary: `完成：行動項目 ${composed.items.length}件、立寄り ${stops.filter((s) => s.options).length}件`,
     judgmentResult: `注意 ${warnings.length + composed.warnings.length}件／仮定 ${draft.assumptions.length + composed.assumptions.length}件`,
   });

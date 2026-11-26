@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ExternalApiError } from '../../src/adapters/http.js';
 import type { PlanContext } from '../../src/agent/context.js';
-import type { PlanEvent } from '../../src/agent/draft.js';
 import {
   answerPlan,
   hasUnknownStation,
@@ -19,6 +18,7 @@ import {
   at,
   decide,
   errand,
+  event,
   fakeAi,
   fakeMaps,
   HOME,
@@ -63,16 +63,6 @@ function setup(
   return { deps, calls, searches };
 }
 
-const event = (ref: string, start: string, end: string, overrides: Partial<PlanEvent> = {}) => ({
-  ref,
-  source: 'calendar' as const,
-  date: '2026-11-25',
-  title: `予定${ref}`,
-  place: '新宿駅',
-  start: at(start),
-  end: at(end),
-  ...overrides,
-});
 /** 保存された計画の代わり（回答のテスト用） */
 const saved = (outcome: Outcome) => ({
   draft: outcome.draft,
@@ -467,6 +457,21 @@ describe('整合性チェック', () => {
     deps.remainingMs = () => 3000;
     await expect(startPlan(deps, context(), INPUT)).rejects.toBeInstanceOf(ExternalApiError);
     expect(late.count()).toBe(1);
+  });
+
+  it('締め切りを過ぎていたら、場所・店の検索も判断も始めない', async () => {
+    const { deps, calls, searches } = setup();
+    deps.remainingMs = () => 0;
+    await expect(startPlan(deps, context(), INPUT)).rejects.toMatchObject({ kind: 'timeout' });
+    expect(calls.map((c) => c.operation)).toEqual(['interpret']);
+    expect(searches).toEqual([]);
+  });
+
+  it('店が見つからず外した立寄りは、選択からも外す（件数の上限に数えない）', async () => {
+    const { deps } = setup({}, { stores: () => [] });
+    const outcome = await startPlan(deps, context(), INPUT);
+    expect(outcome.status).toBe('completed');
+    expect(outcome.draft.stops).toMatchObject([{ id: 's2', selected: false }]);
   });
 
   it('場所が決まらず、用事も立寄りも残らなければ、エラーの計画にする', async () => {

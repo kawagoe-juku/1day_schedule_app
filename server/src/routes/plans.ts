@@ -2,14 +2,15 @@
  * 行動計画の API（/agent/plans）：生成・取得・確認への回答・修正・項目の削除と、準備のみの2本。
  * ここでは、入力の検証・回数の制限・期限・応答の形を扱う。生成の中身は agent/planner.ts。
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { GoogleMapsClient } from '../adapters/google-maps.js';
 import { ExternalApiError } from '../adapters/http.js';
 import type { NavitimeClient } from '../adapters/navitime.js';
 import type { Ai } from '../agent/ai.js';
 import { loadContext, storedCalendar, type CalendarSource } from '../agent/context.js';
-import { jstDate, reconcile, toClarification, toIso, type Draft } from '../agent/draft.js';
+import { reconcile, toClarification, type Draft } from '../agent/draft.js';
+import { atJst, jstDate, toIso } from '../agent/time.js';
 import { createTravel } from '../agent/lookup.js';
 import {
   answerPlan,
@@ -55,17 +56,23 @@ const CHECKPOINT_MARGIN_MS = 500;
 const SAVE_MARGIN_MS = 1000;
 
 const id = z.string().min(1).max(32);
-const CreatePlanRequest = z.strictObject({ inputText: z.string().trim().min(1).max(500) });
+/** 自由入力の文。NUL 文字は PostgreSQL に保存できないので、先に取り除く */
+const text = (max: number) =>
+  z
+    .string()
+    .transform((value) => value.replaceAll('\u0000', ''))
+    .pipe(z.string().trim().min(1).max(max));
+const CreatePlanRequest = z.strictObject({ inputText: text(500) });
 const ClarifyRequest = z.strictObject({
   token: z.number().int(),
-  answer: z.string().trim().min(1).max(500).optional(),
+  answer: text(500).optional(),
   selectedIds: z.array(id).max(20).optional(),
   places: z
     .array(
       z.strictObject({
         id,
         at: z.enum(['home', 'stay', 'place']),
-        text: z.string().trim().min(1).max(100).optional(),
+        text: text(100).optional(),
       }),
     )
     .max(20)
@@ -73,11 +80,9 @@ const ClarifyRequest = z.strictObject({
   homeBetween: z.array(id).max(5).optional(),
 });
 const ReviseRequest = z.strictObject({
-  instruction: z.string().trim().min(1).max(500),
+  instruction: text(500),
   purchaseItems: z
-    .array(
-      z.strictObject({ sourceId: id, items: z.array(z.string().trim().min(1).max(40)).max(20) }),
-    )
+    .array(z.strictObject({ sourceId: id, items: z.array(text(40)).max(20) }))
     .max(10)
     .optional(),
 });
@@ -85,7 +90,8 @@ const ReplanRequest = z.strictObject({ delayMinutes: z.number().int().min(1).max
 const DepartureDetectedRequest = z.strictObject({
   actualDepartureTime: z.iso.datetime({ offset: true }),
 });
-const positive = z.coerce.number().int().positive();
+// ID は PostgreSQL の integer。範囲を超える値は、検索の前に 400 にする
+const positive = z.coerce.number().int().positive().max(2_147_483_647);
 const PlanId = z.object({ planId: positive });
 const ItemId = z.object({ planId: positive, itemId: positive });
 
@@ -93,7 +99,7 @@ const ItemId = z.object({ planId: positive, itemId: positive });
 const NO_CALENDAR: CalendarSource = { list: async () => [] };
 const iso = (date: Date | null) => (date ? toIso(date) : null);
 /** 次の日本時間 0 時 */
-const nextReset = (now: Date) => new Date(`${jstDate(now)}T00:00:00+09:00`).getTime() + 86_400_000;
+const nextReset = (now: Date) => Date.parse(atJst(jstDate(now), '00:00')) + 86_400_000;
 
 /** DB の行を、API 仕様（openapi.yaml）の Plan にする */
 function toPlan(
@@ -160,19 +166,27 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
     return { db: opts.db, ai: opts.ai, maps: opts.googleMaps, repos: repositories(opts.db) };
   };
 
+  /** 生成・回答・修正・削除の入口：認証と1分の制限。期限は、ここから数える */
+  const enter = (request: FastifyRequest) => {
+    if (!request.user) throw unauthorized();
+    limiter.consume(request.user.sub);
+    return { userId: request.user.sub, startedAt: Date.now() };
+  };
+
   /**
    * 生成・回答の共通部分。外部 API を呼ぶ処理（work）に期限を掛け、間に合えば保存して返す。
    * 入口で1日の上限を確かめ、達していれば外部 API を呼ばずに 429 にする
    */
   async function generate(
-    userId: string,
-    inputText: string,
-    existing: Plan | undefined,
+    { userId, startedAt }: ReturnType<typeof enter>,
+    /** 回答・修正・削除で更新する計画。新規なら、入力文 */
+    source: Plan | string,
     work: (planner: PlannerDeps, ctx: Awaited<ReturnType<typeof loadContext>>) => Promise<Outcome>,
-    startedAt = Date.now(),
     /** 生成回数に数えない（項目の削除） */
     free = false,
   ) {
+    const existing = typeof source === 'string' ? undefined : source;
+    const inputText = existing?.inputText ?? (source as string);
     const { db, ai, maps, repos } = dependencies();
     const time = now();
     const retryAfterSeconds = Math.ceil((nextReset(time) - time.getTime()) / 1000);
@@ -244,12 +258,11 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
   }
 
   app.post('/agent/plans', async (request, reply) => {
-    if (!request.user) throw unauthorized();
-    const userId = request.user.sub;
-    limiter.consume(userId);
+    const entry = enter(request);
+    const { userId } = entry;
     const { inputText } = parseInput(CreatePlanRequest, request.body);
     try {
-      const plan = await generate(userId, inputText, undefined, (planner, ctx) =>
+      const plan = await generate(entry, inputText, (planner, ctx) =>
         startPlan(planner, ctx, inputText),
       );
       return await reply.code(201).send(plan);
@@ -287,57 +300,34 @@ export async function planRoutes(app: FastifyInstance, opts: PlanRouteOptions): 
   });
 
   app.post('/agent/plans/:planId/clarify', async (request) => {
-    if (!request.user) throw unauthorized();
-    const userId = request.user.sub;
-    limiter.consume(userId);
-    const startedAt = Date.now();
+    const entry = enter(request);
     const { planId } = parseInput(PlanId, request.params);
     const { token, ...answer } = parseInput(ClarifyRequest, request.body);
-    const plan = await findPlan(userId, planId, 'clarifying');
+    const plan = await findPlan(entry.userId, planId, 'clarifying');
     if (token !== (plan.draft as Draft).rev)
       throw conflict('TOKEN_MISMATCH', '回答する確認が、最新のものと違います');
-    return generate(
-      userId,
-      plan.inputText,
-      plan,
-      (planner, ctx) => answerPlan(planner, ctx, plan, answer),
-      startedAt,
-    );
+    return generate(entry, plan, (planner, ctx) => answerPlan(planner, ctx, plan, answer));
   });
 
   app.post('/agent/plans/:planId/revise', async (request) => {
-    if (!request.user) throw unauthorized();
-    const userId = request.user.sub;
-    limiter.consume(userId);
-    const startedAt = Date.now();
+    const entry = enter(request);
     const { planId } = parseInput(PlanId, request.params);
     const revision = parseInput(ReviseRequest, request.body);
-    const plan = await findPlan(userId, planId, 'completed');
-    return generate(
-      userId,
-      plan.inputText,
-      plan,
-      (planner, ctx) => revisePlan(planner, ctx, plan, revision),
-      startedAt,
-    );
+    const plan = await findPlan(entry.userId, planId, 'completed');
+    return generate(entry, plan, (planner, ctx) => revisePlan(planner, ctx, plan, revision));
   });
 
   app.delete('/agent/plans/:planId/items/:itemId', async (request) => {
-    if (!request.user) throw unauthorized();
-    const userId = request.user.sub;
-    limiter.consume(userId);
-    const startedAt = Date.now();
+    const entry = enter(request);
     const { planId, itemId } = parseInput(ItemId, request.params);
-    const plan = await findPlan(userId, planId, 'completed');
+    const plan = await findPlan(entry.userId, planId, 'completed');
     const items = await dependencies().repos.planItems.listByPlan(plan.id);
     const item = items.find((i) => i.id === itemId);
     if (!item) throw new AppError(404, 'NOT_FOUND', '対象が見つかりません');
     return generate(
-      userId,
-      plan.inputText,
+      entry,
       plan,
       (planner, ctx) => removeItem(planner, ctx, plan, item.sourceId),
-      startedAt,
       true,
     );
   });

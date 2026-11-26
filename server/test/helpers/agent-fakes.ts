@@ -5,6 +5,7 @@ import type { GoogleMapsClient, Place, PlaceSearch } from '../../src/adapters/go
 import type { NavitimeClient, TransitRouteRequest } from '../../src/adapters/navitime.js';
 import type { Ai, AiCall } from '../../src/agent/ai.js';
 import type { Travel } from '../../src/agent/compose.js';
+import type { PlanEvent } from '../../src/agent/draft.js';
 import { SLOT_IDS } from '../../src/agent/slots.js';
 
 export const NOW = new Date('2026-11-25T09:00:00+09:00');
@@ -40,6 +41,23 @@ export const intent = (overrides: Record<string, unknown> = {}) => ({
   removedIds: [],
   shoppingTime: null,
   assumptions: [],
+  ...overrides,
+});
+
+/** その日の予定（ref が c で始まればカレンダー、それ以外はルーティン） */
+export const event = (
+  ref: string,
+  start: string,
+  end: string,
+  overrides: Partial<PlanEvent> = {},
+): PlanEvent => ({
+  ref,
+  source: ref.startsWith('c') ? 'calendar' : 'routine',
+  date: '2026-11-25',
+  title: `予定${ref}`,
+  place: '新宿駅',
+  start: at(start),
+  end: at(end),
   ...overrides,
 });
 

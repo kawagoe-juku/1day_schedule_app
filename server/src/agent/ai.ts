@@ -74,7 +74,9 @@ export const cleanText = (value: string) =>
  * （AI は文字数を正確には守れないので、超過を不合格にはしない）
  */
 export const aiText = (maxLength: number) =>
-  z.string().transform((value) => [...cleanText(value)].slice(0, maxLength).join(''));
+  z.string().transform((value) => clip(value, maxLength));
+/** URL と制御文字を取り除いて、上限の文字数で切る */
+export const clip = (value: string, max: number) => [...cleanText(value)].slice(0, max).join('');
 
 /** 出力のどこかに、目印（またはその断片）が含まれているか */
 const leaksCanary = (output: unknown) => {

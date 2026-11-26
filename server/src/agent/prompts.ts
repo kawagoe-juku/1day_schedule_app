@@ -20,15 +20,17 @@ const optionalText = (maxLength: number) =>
     .nullable()
     .transform((value) => value || null);
 
-export const STORE_CATEGORIES = [
-  'supermarket',
-  'drugstore',
-  'convenience',
-  'home_center',
-  'bakery',
-  'restaurant',
-  'other',
-] as const;
+/** 店の種類と、その呼び名（店の検索語にも使う） */
+export const STORE_LABEL = {
+  supermarket: 'スーパー',
+  drugstore: 'ドラッグストア',
+  convenience: 'コンビニ',
+  home_center: 'ホームセンター',
+  bakery: 'パン屋',
+  restaurant: 'レストラン',
+  other: '買い物',
+} as const;
+export type StoreCategory = keyof typeof STORE_LABEL;
 
 /** 仮定の文（最大3件、各80文字） */
 const assumptions = z
@@ -51,7 +53,7 @@ const Errand = z.object({
 
 const Stop = z.object({
   id: id.nullable(),
-  category: z.enum(STORE_CATEGORIES),
+  category: z.enum(Object.keys(STORE_LABEL) as [StoreCategory, ...StoreCategory[]]),
   /** 店のチェーン名の指定（「マツキヨで」など）。無ければ null */
   chain: optionalText(40),
   /** 生鮮品・冷蔵品を含む */

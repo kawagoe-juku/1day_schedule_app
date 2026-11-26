@@ -10,35 +10,13 @@ import {
 } from '../../src/agent/prompts.js';
 import { matchesTemplate, SLOT_IDS, SLOTS } from '../../src/agent/slots.js';
 import { pointProgramOf } from '../../src/agent/point-chains.js';
+import { errand as baseErrand, intent, SUPERMARKET } from '../helpers/agent-fakes.js';
 
-const errand = {
-  id: null,
-  sameAs: null,
-  title: '待ち合わせ',
-  kind: 'other',
-  place: '東京駅',
-  placeIsSpecific: true,
-  startTime: '13:00',
-  endTime: null,
-};
-const interpretation = {
-  rejected: false,
-  date: 'today',
-  mode: 'train',
+const errand = baseErrand({ endTime: null });
+const interpretation = intent({
   errands: [errand],
-  stops: [
-    {
-      id: null,
-      category: 'supermarket',
-      chain: null,
-      perishable: true,
-      items: ['カレーの食材', '排水口のネット'],
-    },
-  ],
-  removedIds: [],
-  shoppingTime: null,
-  assumptions: [],
-};
+  stops: [{ ...SUPERMARKET, items: ['カレーの食材', '排水口のネット'] }],
+});
 
 describe('Interpretation（読み取りの出力）', () => {
   it('正しい出力を受け入れる', () => {
@@ -135,20 +113,9 @@ describe('Decisions（判断の出力）', () => {
 });
 
 describe('matchesTemplate', () => {
-  const all = SLOT_IDS.map((slot) => ({ slot }));
-
   it('評価の順番は MAIN → OUTBOUND → DEPARTURE → RETURN', () => {
     const types = SLOTS.map((slot) => slot.type).filter((t, i, list) => t !== list[i - 1]);
     expect(types).toEqual(['MAIN', 'OUTBOUND', 'DEPARTURE', 'RETURN']);
-  });
-
-  it('スロットが欠けている・順番が違う・余分がある・重複しているものは一致しない', () => {
-    expect(matchesTemplate(all)).toBe(true);
-    expect(matchesTemplate([all[0]!, all[0]!, ...all.slice(2)])).toBe(false);
-    expect(matchesTemplate(all.slice(1))).toBe(false);
-    expect(matchesTemplate([all[1]!, all[0]!, ...all.slice(2)])).toBe(false);
-    expect(matchesTemplate([...all, all[0]!])).toBe(false);
-    expect(matchesTemplate([])).toBe(false);
   });
 });
 

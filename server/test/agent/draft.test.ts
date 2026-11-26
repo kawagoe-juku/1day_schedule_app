@@ -14,10 +14,16 @@ import {
 } from '../../src/agent/draft.js';
 import type { Spot } from '../../src/agent/lookup.js';
 import { Interpretation } from '../../src/agent/prompts.js';
+import {
+  at,
+  errand as baseErrand,
+  event,
+  HOME,
+  intent as baseIntent,
+  NOW,
+  SUPERMARKET,
+} from '../helpers/agent-fakes.js';
 
-const NOW = new Date('2026-11-25T09:00:00+09:00');
-const at = (time: string, date = '2026-11-25') => `${date}T${time}:00+09:00`;
-const HOME = { lat: 35.64, lng: 139.67 };
 const TOKYO: Spot = {
   placeId: 'p-tokyo',
   name: '東京駅',
@@ -25,46 +31,12 @@ const TOKYO: Spot = {
   location: { lat: 35.6812, lng: 139.7671 },
 };
 
-const errand = (overrides: Record<string, unknown> = {}) => ({
-  id: null,
-  sameAs: null,
-  title: '待ち合わせ',
-  kind: 'other',
-  place: '東京駅',
-  placeIsSpecific: true,
-  startTime: '13:00',
-  endTime: null,
-  ...overrides,
-});
-const stop = (category = 'supermarket') => ({
-  id: null,
-  category,
-  chain: null,
-  perishable: false,
-  items: ['カレーの食材'],
-});
+// 終了の無い用事と、生鮮でない立寄りを基本にする。読み取りは、出力のスキーマを通す
+const errand = (overrides: Record<string, unknown> = {}) =>
+  baseErrand({ endTime: null, ...overrides });
+const stop = (category = 'supermarket') => ({ ...SUPERMARKET, perishable: false, category });
 const intent = (overrides: Record<string, unknown> = {}) =>
-  Interpretation.parse({
-    rejected: false,
-    date: 'today',
-    mode: 'train',
-    errands: [errand()],
-    stops: [stop()],
-    removedIds: [],
-    shoppingTime: null,
-    assumptions: [],
-    ...overrides,
-  });
-const event = (ref: string, start: string, end: string, overrides: Partial<PlanEvent> = {}) => ({
-  ref,
-  source: ref.startsWith('c') ? ('calendar' as const) : ('routine' as const),
-  date: '2026-11-25',
-  title: `予定${ref}`,
-  place: '新宿駅',
-  start: at(start),
-  end: at(end),
-  ...overrides,
-});
+  Interpretation.parse(baseIntent({ errands: [errand()], stops: [stop()], ...overrides }));
 const draftOf = (i = intent(), events: PlanEvent[] = []) => createDraft(i, events, NOW);
 const resolved = (draft: Draft) => {
   for (const e of draft.errands) if (e.at === 'place') e.spot = TOKYO;
@@ -98,6 +70,14 @@ describe('createDraft', () => {
       start: at('23:00', '2026-11-26'),
       end: at('01:00', '2026-11-27'),
     });
+  });
+
+  it('終了が開始と同じ・翌日にすると 12 時間を超えるものは、終了なしにする', () => {
+    const ends = (startTime: string, endTime: string) =>
+      draftOf(intent({ errands: [errand({ startTime, endTime })] })).errands[0]?.end;
+    expect(ends('14:00', '14:00')).toBeUndefined();
+    expect(ends('14:00', '13:00')).toBeUndefined();
+    expect(ends('22:00', '06:00')).toBe(at('06:00', '2026-11-26'));
   });
 
   it('対象日の予定だけを用事にする。場所が空・オンラインの予定は、迎え方を選んでもらう', () => {
@@ -214,7 +194,6 @@ describe('予定の一覧', () => {
         draftOf(intent({ errands: [] }), [event('c1', '10:00', '11:00', { place: undefined })]),
       ),
     ).toBe(true);
-    expect(needsSelection({ ...draftOf(intent(), events), selectionDone: true })).toBe(false);
     // 終わった（初期値で選ばない）予定の迎え方だけでは、一覧を出さない
     expect(
       needsSelection(draftOf(intent(), [event('c1', '07:00', '08:00', { place: undefined })])),
@@ -225,7 +204,6 @@ describe('予定の一覧', () => {
     const draft = draftOf(intent(), events);
     applySelection(draft, { selectedIds: ['e2', 's4'] });
     expect(draft.errands.map((e) => e.selected)).toEqual([false, true, false]);
-    expect(draft.selectionDone).toBe(true);
 
     expect(() => applySelection(draftOf(intent(), events), { selectedIds: ['x9'] })).toThrow();
     expect(() => applySelection(draftOf(intent(), events), { selectedIds: [] })).toThrow();
@@ -453,6 +431,32 @@ describe('確認質問', () => {
     expect(draft.errands[0]).toMatchObject({ at: 'place', place: '渋谷ヒカリエ' });
   });
 
+  it('「外出先で迎える」にした予定も、場所を入れたら、その場所へ行く用事にする', () => {
+    const draft = draftOf(intent({ errands: [] }), [
+      event('c1', '10:00', '11:00'),
+      event('c2', '12:00', '13:00', { place: undefined }),
+    ]);
+    applySelection(draft, { selectedIds: ['e1', 'e2'], places: [{ id: 'e2', at: 'stay' }] });
+    applyPatch(draft, 'e2', {
+      place: '渋谷のカフェ',
+      placeIsSpecific: false,
+      startTime: null,
+      endTime: null,
+    });
+    expect(draft.errands[1]).toMatchObject({ at: 'place', place: '渋谷のカフェ' });
+  });
+
+  it('開始より前の終了を答えられたら、翌日にせず、終了を変えない', () => {
+    const draft = resolved(draftOf(intent({ errands: [errand({ startTime: '14:00' })] })));
+    applyPatch(draft, 'e1', {
+      place: null,
+      placeIsSpecific: true,
+      startTime: null,
+      endTime: '13:00',
+    });
+    expect(draft.errands[0]?.end).toBeUndefined();
+  });
+
   it('飲み会は、開始だけを聞く（終了は 2 時間の既定で決まる）。仮定でも 2 時間にする', () => {
     const draft = resolved(
       draftOf(intent({ errands: [errand({ kind: 'party', startTime: null })] })),
@@ -466,6 +470,16 @@ describe('確認質問', () => {
     const draft = resolved(draftOf(intent({ errands: [errand({ startTime: null })] })));
     assume(draft, new Map(), new Date(at('22:40')), HOME);
     expect(draft.errands[0]?.start).toBe(at('23:30'));
+  });
+
+  it('23:30 を過ぎていたら、開始を仮定せずに、計画から外す', () => {
+    const draft = resolved(draftOf(intent({ errands: [errand({ startTime: null })] })));
+    const warnings = assume(draft, new Map(), new Date(at('23:40')), HOME);
+    expect(draft.errands[0]).toMatchObject({ selected: false });
+    expect(warnings).toEqual([
+      '「待ち合わせ」は、今日のうちに始められないため、計画から外しました',
+    ]);
+    expect(draft.assumptions).toEqual([]);
   });
 
   it('上限に達したら、仮定で埋める（今日は2時間後を30分単位に切り上げ、所要 60 分）', () => {
@@ -619,6 +633,13 @@ describe('applyRevision（修正の反映）', () => {
       intent({ errands: [errand({ id: 'e1', startTime: '15:00', endTime: '16:00' })], stops: [] }),
     );
     expect(draft.errands[0]?.original).toMatchObject({ start: at('13:00') });
+  });
+
+  it('件名を変えたら、仮定の文の件名も変える（$& などを置換の記号として読まない）', () => {
+    const draft = draftOf(intent({ stops: [] }));
+    draft.assumptions = ['「待ち合わせ」の所要時間を 60 分と仮定しました'];
+    applyRevision(draft, intent({ errands: [errand({ id: 'e1', title: "$&と$'" })], stops: [] }));
+    expect(draft.assumptions).toEqual(["「$&と$'」の所要時間を 60 分と仮定しました"]);
   });
 
   it('取りやめた用事は、仮定の文・帰宅の指定からも消す。予定の件名は書き換えない', () => {

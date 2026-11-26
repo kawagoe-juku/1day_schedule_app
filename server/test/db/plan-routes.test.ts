@@ -15,6 +15,7 @@ import { plan as planTable, user } from '../../src/db/schema.js';
 import type { PlanRouteOptions } from '../../src/routes/plans.js';
 import { SLOT_IDS } from '../../src/agent/slots.js';
 import {
+  decide,
   errand,
   fakeAi,
   fakeMaps,
@@ -78,29 +79,17 @@ async function setup(
     logger: false,
   });
   const server = app;
-  const post = (inputText = INPUT, userId = U1) =>
-    server.inject({
-      method: 'POST',
-      url: '/agent/plans',
-      headers: auth(userId),
-      payload: { inputText },
-    });
-  const clarify = (planId: number, payload: Record<string, unknown>, userId = U1) =>
-    server.inject({
-      method: 'POST',
-      url: `/agent/plans/${planId}/clarify`,
-      headers: auth(userId),
-      payload,
-    });
-  const get = (planId: number, userId = U1) =>
-    server.inject({ method: 'GET', url: `/agent/plans/${planId}`, headers: auth(userId) });
-  const call = (method: 'POST' | 'DELETE', path: string, payload?: unknown, userId = U1) =>
+  const call = (method: 'GET' | 'POST' | 'DELETE', path: string, payload?: unknown, userId = U1) =>
     server.inject({
       method,
-      url: `/agent/plans/${path}`,
+      url: `/agent/plans${path && `/${path}`}`,
       headers: auth(userId),
       ...(payload !== undefined && { payload: payload as Record<string, unknown> }),
     });
+  const post = (inputText = INPUT, userId = U1) => call('POST', '', { inputText }, userId);
+  const clarify = (planId: number, payload: Record<string, unknown>, userId = U1) =>
+    call('POST', `${planId}/clarify`, payload, userId);
+  const get = (planId: number, userId = U1) => call('GET', `${planId}`, undefined, userId);
   return { post, clarify, get, call, calls, repos: repositories(conn.db) };
 }
 const plansOf = (userId = U1) =>
@@ -208,6 +197,12 @@ describe('POST /agent/plans', () => {
     expect(await plansOf()).toHaveLength(0);
   });
 
+  it('入力文の NUL 文字は、取り除いて受け付ける（保存で失敗しない）', async () => {
+    const { post } = await setup();
+    expect((await post(`${INPUT}\u0000`)).statusCode).toBe(201);
+    expect((await plansOf())[0]?.inputText).toBe(INPUT);
+  });
+
   it('不適切な入力（AI の判定）は 400 で、計画を作らない', async () => {
     const { post } = await setup({ interpret: intent({ rejected: true, errands: [], stops: [] }) });
     const response = await post();
@@ -305,6 +300,8 @@ describe('GET /agent/plans/{planId}', () => {
     expect((await get(999_999_999)).statusCode).toBe(404);
     const invalid = await app!.inject({ method: 'GET', url: '/agent/plans/abc', headers: auth() });
     expect(invalid.statusCode).toBe(400);
+    // PostgreSQL の integer を超える ID も 400（500 にしない）
+    expect((await get(2_147_483_648)).statusCode).toBe(400);
   });
 });
 
@@ -472,14 +469,7 @@ describe('POST /agent/plans/{planId}/clarify', () => {
       patch: PATCH,
       decide: (data) => {
         if (fail) return new ExternalApiError('bedrock', 'decide', 'timeout');
-        return {
-          slots: SLOT_IDS.map((slot) => ({ slot, decision: '問題なし' })),
-          stopovers: data.candidates.slice(0, 1).map((c) => ({
-            stopId: c.stopId,
-            candidate: c.candidate,
-            when: c.when[0],
-          })),
-        };
+        return decide(data);
       },
     });
     const first = (await post()).json();

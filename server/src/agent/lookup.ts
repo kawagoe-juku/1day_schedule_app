@@ -16,11 +16,13 @@ import {
   MODE_LABEL,
   type Leg,
   type Mode,
+  type Priority,
   type RouteStep,
   type Store,
   type Travel,
 } from './compose.js';
 import { pointProgramOf } from './point-chains.js';
+import { STORE_LABEL, type StoreCategory } from './prompts.js';
 
 export type Spot = Omit<Store, 'openingPeriods' | 'pointProgramCode'>;
 
@@ -45,14 +47,6 @@ export async function findPlaces(
 
 // ---- 店舗の候補
 
-const CATEGORY_QUERY: Record<string, string> = {
-  supermarket: 'スーパー',
-  drugstore: 'ドラッグストア',
-  convenience: 'コンビニ',
-  home_center: 'ホームセンター',
-  bakery: 'パン屋',
-  restaurant: 'レストラン',
-};
 const STORE_RADIUS_METERS = 1000;
 const STORES_PER_ANCHOR = 3;
 
@@ -90,14 +84,16 @@ export interface StoreSearchOptions {
  */
 export async function findStores(
   maps: GoogleMapsClient,
-  stops: readonly { id: string; category: string; chain?: string | null }[],
+  stops: readonly { id: string; category: StoreCategory; chain?: string | null }[],
   anchors: readonly StoreAnchor[],
   options: StoreSearchOptions,
 ): Promise<{ candidates: StoreCandidate[]; failedStopIds: string[] }> {
   const failedStopIds: string[] = [];
   const perStop = await Promise.all(
     stops.map(async (stop) => {
-      const query = [stop.chain, CATEGORY_QUERY[stop.category]].filter(Boolean).join(' ');
+      // 種類の分からない買い物（other）は、チェーン名があるときだけ探す
+      const label = stop.category === 'other' ? undefined : STORE_LABEL[stop.category];
+      const query = [stop.chain, label].filter(Boolean).join(' ');
       if (!query) return [];
       const results = await Promise.allSettled(
         anchors.map((anchor) =>
@@ -169,7 +165,7 @@ const unavailable = (error: unknown) => {
 
 export interface TravelOptions {
   walkingSpeed: keyof typeof WALK_KMH;
-  priority: 'on_time' | 'save_money' | 'points';
+  priority: Priority;
 }
 
 const simpleStep = (mode: Mode, minutes: number, distance?: number): RouteStep[] => [
