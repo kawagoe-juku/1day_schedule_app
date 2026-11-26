@@ -3,6 +3,7 @@
 import 'clarification.dart';
 import 'generation_quota.dart';
 import 'plan_item.dart';
+import 'plan_purchase_items_item.dart';
 import 'plan_status.dart';
 
 class Plan {
@@ -13,7 +14,7 @@ class Plan {
     required this.status,
     required this.inputText,
 
-    /// 計画の対象日（当日・日本時間）
+    /// 計画の対象日（今日または明日・日本時間）
     required this.targetDate,
 
     /// 自宅の出発時刻（completed時）
@@ -22,7 +23,11 @@ class Plan {
     /// 帰宅時刻（completed時）
     this.returnTime,
 
-    /// 確認質問（clarifying時のみ）
+    /// 立寄りごとの買う品目（入力・メモから抽出）。サーバには保存しないので、入力を読み取った応答
+    /// （計画の生成と修正）にだけ入る。画面が計画の ID と立寄りの ID（`PlanItem.sourceId`）で保持する
+    this.purchaseItems,
+
+    /// 確認（clarifying時のみ）
     this.clarification,
 
     /// 情報不足のため仮定した内容（画面に明示する）
@@ -49,6 +54,15 @@ class Plan {
         : null,
     returnTime: json.containsKey("returnTime")
         ? DateTime.parse(json["returnTime"] as String).toUtc()
+        : null,
+    purchaseItems: json.containsKey("purchaseItems")
+        ? (json["purchaseItems"] as List<Object?>)
+              .map(
+                (item) => PlanPurchaseItemsItem.fromJson(
+                  item as Map<String, Object?>,
+                ),
+              )
+              .toList()
         : null,
     clarification: json.containsKey("clarification")
         ? Clarification.fromJson(json["clarification"] as Map<String, Object?>)
@@ -78,7 +92,7 @@ class Plan {
 
   final String inputText;
 
-  /// 計画の対象日（当日・日本時間）
+  /// 計画の対象日（今日または明日・日本時間）
   final String targetDate;
 
   /// 自宅の出発時刻（completed時）
@@ -87,7 +101,11 @@ class Plan {
   /// 帰宅時刻（completed時）
   final DateTime? returnTime;
 
-  /// 確認質問（clarifying時のみ）
+  /// 立寄りごとの買う品目（入力・メモから抽出）。サーバには保存しないので、入力を読み取った応答
+  /// （計画の生成と修正）にだけ入る。画面が計画の ID と立寄りの ID（`PlanItem.sourceId`）で保持する
+  final List<PlanPurchaseItemsItem>? purchaseItems;
+
+  /// 確認（clarifying時のみ）
   final Clarification? clarification;
 
   /// 情報不足のため仮定した内容（画面に明示する）
@@ -112,6 +130,7 @@ class Plan {
     "targetDate",
     "departureTime",
     "returnTime",
+    "purchaseItems",
     "clarification",
     "assumptions",
     "warnings",
@@ -134,6 +153,10 @@ class Plan {
       "departureTime": this.departureTime?.toUtc().toIso8601String(),
     if (this.returnTime != null)
       "returnTime": this.returnTime?.toUtc().toIso8601String(),
+    if (this.purchaseItems != null)
+      "purchaseItems": this.purchaseItems
+          ?.map((item) => item.toJson())
+          .toList(),
     if (this.clarification != null)
       "clarification": this.clarification?.toJson(),
     "assumptions": this.assumptions.map((item) => item).toList(),

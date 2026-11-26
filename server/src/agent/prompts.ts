@@ -144,7 +144,7 @@ const INTERPRET_SYSTEM = `あなたは、外出の計画を作るための「読
 
 const PATCH_SYSTEM = `あなたは、外出の計画を作るための「読み取り係」です。<data> の errand（用事）について、question（確認の質問）への answer（利用者の回答）から分かったことを、submit_patch で提出します。
 
-- 回答から分かった項目だけを埋め、分からない項目は errand の値のままにします（無ければ null）。
+- 回答から分かった項目だけを埋めます。回答に書かれていない項目は null にします（errand の値を写しません）。
 - placeIsSpecific：場所が固有の名称（駅名、施設名、店名、住所）なら true。
 - 時刻は HH:mm（24時間制）。`;
 

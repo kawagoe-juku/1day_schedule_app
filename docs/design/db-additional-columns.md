@@ -52,6 +52,7 @@
 | **追加** | clarification_question | varchar(255) | YES | NULL | clarification.question（確認質問中のみ） |
 | **追加** | assumptions | jsonb | NO | `'[]'` | assumptions（仮定した内容の文字列配列） |
 | **追加** | warnings | jsonb | NO | `'[]'` | warnings（注意の文字列配列） |
+| **追加** | draft | jsonb | YES | NULL | 計画の下書き（WBS 5.x で追加。マイグレーション 0001）。確認への回答・修正・項目の削除で、計画を作り直すために使う。品目名・入力の原文は入れない。対象日を過ぎたら日次バッチ（7.2）で NULL にする |
 | 削除 | created_by_user_id, updated_by_user_id, is_deleted, deleted_at | - | - | - | D5・D6 |
 
 インデックス：`idx_plan_user_id_created_at (user_id, created_at)`（履歴表示用）に置き換える。
@@ -67,6 +68,7 @@
 | 変更 | transport_mode | varchar(10) | YES | NULL | CHECK: walk / bicycle / car / train。D7 |
 | 変更 | route_detail | jsonb | YES | NULL | `{ distanceMeters, durationMinutes, fareYen, polyline, steps[] }`。運賃（fare）はここに含める |
 | **追加** | store | jsonb | YES | NULL | `{ placeId, name, address, pointProgramCode }`（立寄り先の店舗。openNow は保存しない） |
+| **追加** | source_id | varchar(16) | YES | NULL | sourceId（元になった用事・立寄りの ID。WBS 5.x で追加。マイグレーション 0001） |
 | 削除 | created_by_user_id, updated_by_user_id, is_deleted, deleted_at | - | - | - | D5・D6 |
 
 `purchaseItems`（買う品目）は API の説明どおり DB に保存しない。
